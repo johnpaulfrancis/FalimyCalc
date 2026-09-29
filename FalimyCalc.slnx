@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="FalimyCalc.Data/FalimyCalc.Data.csproj" Id="b8595e91-3564-46de-9b17-4fedf5491466" />
+  <Project Path="FalimyCalc.Mobile/FalimyCalc.Mobile.csproj" Id="8f84668d-23a9-479f-b8ea-0ea6fdf9ce01" />
+  <Project Path="FalimyCalc.Shared/FalimyCalc.Shared.csproj" Id="352bd39c-b53b-4a42-a444-cd26e2ff99a2" />
+  <Project Path="FalimyCalc.Web/FalimyCalc.Web.csproj" />
+</Solution>
