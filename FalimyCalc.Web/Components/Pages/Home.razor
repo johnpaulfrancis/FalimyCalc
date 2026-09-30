@@ -1,7 +1,144 @@
-﻿@page "/"
+@page "/"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@inject ExpenseService ExpenseService
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Dashboard — FalimyCalc</PageTitle>
 
-<h1>Hello, world!</h1>
+<h1>Dashboard</h1>
+<p class="text-muted">@DateTime.Now.ToString("MMMM yyyy")</p>
 
-Welcome to your new app.
+@if (IsLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <!-- Monthly total -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <p class="text-muted mb-1 small">This Month's Spending</p>
+                    <h2 class="mb-0 fw-bold text-danger">₹ @MonthlyTotal.ToString("N2")</h2>
+                    <p class="text-muted small mt-1 mb-0">@DateTime.Now.ToString("MMMM yyyy")</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <p class="text-muted mb-1 small">Recent Transactions</p>
+                    <h2 class="mb-0 fw-bold">@RecentExpenses.Count</h2>
+                    <p class="text-muted small mt-1 mb-0">Last 5 expenses</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <p class="text-muted mb-1 small">Quick Actions</p>
+                    <a href="/expenses/add" class="btn btn-primary btn-sm">+ Add Expense</a>
+                    <a href="/expenses" class="btn btn-outline-secondary btn-sm mt-2">View All</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <!-- Spending by category -->
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-transparent fw-semibold">
+                    Spending by Category — @DateTime.Now.ToString("MMMM")
+                </div>
+                <div class="card-body">
+                    @if (!CategoryTotals.Any())
+                    {
+                        <p class="text-muted mb-0">No expenses this month.</p>
+                    }
+                    else
+                    {
+                        @foreach (var item in CategoryTotals.OrderByDescending(x => x.Value))
+                        {
+                            var pct = MonthlyTotal > 0
+                                ? (int)Math.Round(item.Value / MonthlyTotal * 100)
+                                : 0;
+                            <div class="mb-2">
+                                <div class="d-flex justify-content-between small mb-1">
+                                    <span>@item.Key</span>
+                                    <span class="fw-semibold">₹ @item.Value.ToString("N2") (@pct%)</span>
+                                </div>
+                                <div class="progress" style="height:6px">
+                                    <div class="progress-bar bg-danger" style="width:@pct%"></div>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent expenses -->
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-transparent fw-semibold">
+                    Recent Expenses
+                </div>
+                <div class="card-body p-0">
+                    @if (!RecentExpenses.Any())
+                    {
+                        <p class="text-muted p-3 mb-0">No expenses yet.
+                            <a href="/expenses/add">Add your first one</a>.
+                        </p>
+                    }
+                    else
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var expense in RecentExpenses)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="fw-semibold">@expense.Description</div>
+                                        <small class="text-muted">
+                                            @expense.TransactionDate.ToString("dd MMM yyyy")
+                                            @if (expense.Category is not null)
+                                            {
+                                                <span class="ms-2">· @expense.Category.Icon @expense.Category.Name</span>
+                                            }
+                                        </small>
+                                    </div>
+                                    <span class="fw-bold text-danger">₹ @expense.Amount.ToString("N2")</span>
+                                </li>
+                            }
+                        </ul>
+                        <div class="p-2 text-end">
+                            <a href="/expenses" class="btn btn-sm btn-link">View all →</a>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool IsLoading = true;
+    private decimal MonthlyTotal;
+    private Dictionary<string, decimal> CategoryTotals = [];
+    private List<Expense> RecentExpenses = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var now = DateTime.Now;
+
+        MonthlyTotal = await ExpenseService.GetMonthlyTotalAsync(now.Year, now.Month);
+        CategoryTotals = await ExpenseService.GetMonthlyTotalsByCategoryAsync(now.Year, now.Month);
+
+        var (items, _) = await ExpenseService.GetExpensesAsync(page: 1, pageSize: 5);
+        RecentExpenses = items;
+
+        IsLoading = false;
+    }
+}

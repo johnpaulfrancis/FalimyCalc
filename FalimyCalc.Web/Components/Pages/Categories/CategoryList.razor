@@ -1,0 +1,237 @@
+@page "/categories"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@inject ExpenseService ExpenseService
+
+<PageTitle>Categories</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Categories</h1>
+    <button class="btn btn-primary" @onclick="ShowAddForm">+ Add Category</button>
+</div>
+
+@if (IsLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <!-- Add / Edit inline form -->
+    @if (ShowForm)
+    {
+        <div class="card border-primary mb-4">
+            <div class="card-header">@(EditingCategory is null ? "New Category" : "Edit Category")</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Name <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="FormName" placeholder="e.g. Groceries" maxlength="100" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Icon (emoji)</label>
+                        <input class="form-control" @bind="FormIcon" placeholder="🛒" maxlength="10" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Colour</label>
+                        <input type="color" class="form-control form-control-color w-100"
+                               @bind="FormColour" />
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end gap-2">
+                        <button class="btn btn-primary" @onclick="SaveCategory" disabled="@IsSaving">
+                            @if (IsSaving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Save
+                        </button>
+                        <button class="btn btn-outline-secondary" @onclick="HideForm">Cancel</button>
+                        @if (!string.IsNullOrEmpty(FormError))
+                        {
+                            <span class="text-danger small">@FormError</span>
+                        }
+                    </div>
+                </div>
+                <!-- Preview -->
+                @if (!string.IsNullOrWhiteSpace(FormName))
+                {
+                    <div class="mt-3">
+                        <span class="small text-muted me-2">Preview:</span>
+                        <span class="badge rounded-pill" style="background-color:@FormColour">
+                            @FormIcon @FormName
+                        </span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- Category list -->
+    @if (!Categories.Any())
+    {
+        <p class="text-muted">No categories found.</p>
+    }
+    else
+    {
+        <div class="row g-3">
+            @foreach (var cat in Categories)
+            {
+                <div class="col-md-4 col-lg-3">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body d-flex align-items-center justify-content-between">
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="badge rounded-pill fs-6"
+                                      style="background-color:@(cat.Colour ?? "#aaa")">
+                                    @cat.Icon
+                                </span>
+                                <span class="fw-semibold">@cat.Name</span>
+                            </div>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-outline-primary"
+                                        @onclick="() => StartEdit(cat)">✏️</button>
+                                <button class="btn btn-sm btn-outline-danger"
+                                        @onclick="() => ConfirmDelete(cat)">🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+<!-- Delete confirmation -->
+@if (CategoryToDelete is not null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirm Delete</h5>
+                </div>
+                <div class="modal-body">
+                    Delete category <strong>@CategoryToDelete.Name</strong>?
+                    <p class="text-warning mt-2 mb-0">
+                        Expenses in this category will become uncategorised.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+                    <button class="btn btn-danger" @onclick="DeleteConfirmed">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Category> Categories = [];
+    private bool IsLoading = true;
+    private bool ShowForm = false;
+    private bool IsSaving = false;
+    private string? FormError;
+
+    // Form fields
+    private string FormName = string.Empty;
+    private string FormIcon = string.Empty;
+    private string FormColour = "#4ECDC4";
+
+    private Category? EditingCategory;
+    private Category? CategoryToDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCategories();
+    }
+
+    private async Task LoadCategories()
+    {
+        IsLoading = true;
+        Categories = await ExpenseService.GetCategoriesAsync();
+        IsLoading = false;
+    }
+
+    private void ShowAddForm()
+    {
+        EditingCategory = null;
+        FormName = string.Empty;
+        FormIcon = string.Empty;
+        FormColour = "#4ECDC4";
+        FormError = null;
+        ShowForm = true;
+    }
+
+    private void StartEdit(Category cat)
+    {
+        EditingCategory = cat;
+        FormName = cat.Name;
+        FormIcon = cat.Icon ?? string.Empty;
+        FormColour = cat.Colour ?? "#4ECDC4";
+        FormError = null;
+        ShowForm = true;
+    }
+
+    private void HideForm()
+    {
+        ShowForm = false;
+        EditingCategory = null;
+        FormError = null;
+    }
+
+    private async Task SaveCategory()
+    {
+        FormError = null;
+
+        if (string.IsNullOrWhiteSpace(FormName))
+        {
+            FormError = "Name is required.";
+            return;
+        }
+
+        IsSaving = true;
+
+        try
+        {
+            if (EditingCategory is null)
+            {
+                await ExpenseService.CreateCategoryAsync(new Category
+                {
+                    Name = FormName.Trim(),
+                    Icon = string.IsNullOrWhiteSpace(FormIcon) ? null : FormIcon.Trim(),
+                    Colour = FormColour
+                });
+            }
+            else
+            {
+                await ExpenseService.UpdateCategoryAsync(new Category
+                {
+                    GlobalId = EditingCategory.GlobalId,
+                    Name = FormName.Trim(),
+                    Icon = string.IsNullOrWhiteSpace(FormIcon) ? null : FormIcon.Trim(),
+                    Colour = FormColour
+                });
+            }
+
+            HideForm();
+            await LoadCategories();
+        }
+        catch (Exception ex)
+        {
+            FormError = $"Failed to save: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void ConfirmDelete(Category cat) => CategoryToDelete = cat;
+    private void CancelDelete() => CategoryToDelete = null;
+
+    private async Task DeleteConfirmed()
+    {
+        if (CategoryToDelete is not null)
+        {
+            await ExpenseService.DeleteCategoryAsync(CategoryToDelete.GlobalId);
+            CategoryToDelete = null;
+            await LoadCategories();
+        }
+    }
+}
