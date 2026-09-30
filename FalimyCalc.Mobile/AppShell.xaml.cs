@@ -1,10 +1,15 @@
-﻿namespace FalimyCalc.Mobile
+using FalimyCalc.Mobile.Views;
+
+namespace FalimyCalc.Mobile;
+
+public partial class AppShell : Shell
 {
-    public partial class AppShell : Shell
+    public AppShell()
     {
-        public AppShell ()
-        {
-            InitializeComponent();
-        }
+        InitializeComponent();
+
+        // Register routes that are navigated to programmatically
+        // (not declared as tabs in the Shell XAML)
+        Routing.RegisterRoute(nameof(ExpenseFormPage), typeof(ExpenseFormPage));
     }
 }

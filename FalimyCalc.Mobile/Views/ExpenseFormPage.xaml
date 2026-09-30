@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="FalimyCalc.Mobile.Views.ExpenseFormPage"
+             Title="Add Expense">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="16">
+
+            <Label Text="Amount (₹)" FontSize="13" TextColor="#666" />
+            <Entry x:Name="AmountEntry" Keyboard="Numeric"
+                   Placeholder="0.00" FontSize="18" />
+
+            <Label Text="Description" FontSize="13" TextColor="#666" />
+            <Entry x:Name="DescriptionEntry"
+                   Placeholder="What was this for?" MaxLength="500" />
+
+            <Label Text="Date" FontSize="13" TextColor="#666" />
+            <DatePicker x:Name="TransactionDatePicker" Format="dd MMM yyyy" />
+
+            <Label Text="Category" FontSize="13" TextColor="#666" />
+            <Picker x:Name="CategoryPicker" Title="Select category" />
+
+            <Label x:Name="ErrorLabel" TextColor="Red" IsVisible="False" />
+
+            <Button x:Name="SaveButton" Text="Save Expense"
+                    BackgroundColor="#1976D2" TextColor="White"
+                    CornerRadius="8" Clicked="OnSaveClicked" />
+
+            <Button Text="Cancel" Style="{StaticResource OutlinedButton}"
+                    Clicked="OnCancelClicked" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

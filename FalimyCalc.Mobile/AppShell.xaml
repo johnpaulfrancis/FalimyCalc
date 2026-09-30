@@ -3,12 +3,22 @@
     x:Class="FalimyCalc.Mobile.AppShell"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-    xmlns:local="clr-namespace:FalimyCalc.Mobile"
-    Title="FalimyCalc.Mobile">
+    xmlns:views="clr-namespace:FalimyCalc.Mobile.Views"
+    Title="FalimyCalc"
+    Shell.NavBarHasShadow="True">
 
-    <ShellContent
-        Title="Home"
-        ContentTemplate="{DataTemplate local:MainPage}"
-        Route="MainPage" />
+    <TabBar>
+        <Tab Title="Dashboard" Icon="home.png">
+            <ShellContent
+                ContentTemplate="{DataTemplate views:DashboardPage}"
+                Route="DashboardPage" />
+        </Tab>
+
+        <Tab Title="Expenses" Icon="money.png">
+            <ShellContent
+                ContentTemplate="{DataTemplate views:ExpenseListPage}"
+                Route="ExpenseListPage" />
+        </Tab>
+    </TabBar>
 
 </Shell>

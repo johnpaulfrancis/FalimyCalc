@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="FalimyCalc.Mobile.Views.ExpenseListPage"
+             Title="Expenses">
+
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="+" Clicked="OnAddClicked" Order="Primary" Priority="0" />
+    </ContentPage.ToolbarItems>
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Search bar -->
+        <SearchBar Grid.Row="0" x:Name="SearchBar"
+                   Placeholder="Search expenses..."
+                   TextChanged="OnSearchChanged"
+                   Margin="8,8,8,0" />
+
+        <!-- Expense list -->
+        <RefreshView Grid.Row="1" x:Name="RefreshView" Refreshing="OnRefreshing">
+            <CollectionView x:Name="ExpensesCollection"
+                            SelectionMode="None">
+
+                <CollectionView.EmptyView>
+                    <VerticalStackLayout HorizontalOptions="Center"
+                                         VerticalOptions="Center" Spacing="12" Margin="32">
+                        <Label Text="No expenses found." HorizontalTextAlignment="Center"
+                               TextColor="{AppThemeBinding Light=#888, Dark=#aaa}" />
+                        <Button Text="+ Add Expense" Clicked="OnAddClicked" />
+                    </VerticalStackLayout>
+                </CollectionView.EmptyView>
+
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="8,4" Padding="12" StrokeThickness="1"
+                                BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                                Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#333}">
+                            <Border.StrokeShape>
+                                <RoundRectangle CornerRadius="8" />
+                            </Border.StrokeShape>
+
+                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+
+                                <!-- Description -->
+                                <Label Grid.Row="0" Grid.Column="0"
+                                       Text="{Binding Description}"
+                                       FontAttributes="Bold" FontSize="14"
+                                       LineBreakMode="TailTruncation" MaxLines="1" />
+
+                                <!-- Amount -->
+                                <Label Grid.Row="0" Grid.Column="1"
+                                       Text="{Binding Amount, StringFormat='₹ {0:N2}'}"
+                                       FontAttributes="Bold" FontSize="15"
+                                       TextColor="#E53935"
+                                       VerticalOptions="Start" />
+
+                                <!-- Date + action buttons row -->
+                                <Label Grid.Row="1" Grid.Column="0"
+                                       Text="{Binding TransactionDate, StringFormat='{0:dd MMM yyyy}'}"
+                                       FontSize="12"
+                                       TextColor="{AppThemeBinding Light=#888, Dark=#aaa}"
+                                       VerticalOptions="Center" />
+
+                                <HorizontalStackLayout Grid.Row="1" Grid.Column="1"
+                                                       Spacing="6" HorizontalOptions="End">
+                                    <Button Text="Edit"
+                                            FontSize="11" Padding="8,4"
+                                            HeightRequest="32"
+                                            BackgroundColor="#1976D2" TextColor="White"
+                                            CornerRadius="6"
+                                            Clicked="OnEditClicked"
+                                            CommandParameter="{Binding .}" />
+                                    <Button Text="Del"
+                                            FontSize="11" Padding="8,4"
+                                            HeightRequest="32"
+                                            BackgroundColor="#E53935" TextColor="White"
+                                            CornerRadius="6"
+                                            Clicked="OnDeleteClicked"
+                                            CommandParameter="{Binding .}" />
+                                </HorizontalStackLayout>
+
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </RefreshView>
+
+    </Grid>
+</ContentPage>
