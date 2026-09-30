@@ -1,0 +1,238 @@
+@page "/expenses"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@inject ExpenseService ExpenseService
+@inject NavigationManager Nav
+
+<PageTitle>Expenses</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Expenses</h1>
+    <a href="/expenses/add" class="btn btn-primary">+ Add Expense</a>
+</div>
+
+<!-- Filters -->
+<div class="row g-2 mb-3">
+    <div class="col-md-4">
+        <input class="form-control" placeholder="Search description..."
+               @bind="SearchTerm" @bind:event="oninput" @onkeyup="OnSearchChanged" />
+    </div>
+    <div class="col-md-3">
+        <select class="form-select" @bind="SelectedCategoryId" @bind:after="LoadExpenses">
+            <option value="">All Categories</option>
+            @foreach (var cat in Categories)
+            {
+                <option value="@cat.GlobalId">@cat.Icon @cat.Name</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <input type="date" class="form-control" @bind="FromDate" @bind:after="LoadExpenses" />
+    </div>
+    <div class="col-md-2">
+        <input type="date" class="form-control" @bind="ToDate" @bind:after="LoadExpenses" />
+    </div>
+    <div class="col-md-1">
+        <button class="btn btn-outline-secondary w-100" @onclick="ClearFilters">Clear</button>
+    </div>
+</div>
+
+<!-- Summary bar -->
+@if (TotalCount > 0)
+{
+    <div class="alert alert-info py-2">
+        Showing <strong>@Expenses.Count</strong> of <strong>@TotalCount</strong> expenses
+        &nbsp;|&nbsp; Page total: <strong>₹ @Expenses.Sum(e => e.Amount).ToString("N2")</strong>
+    </div>
+}
+
+<!-- Expense table -->
+@if (IsLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else if (!Expenses.Any())
+{
+    <div class="text-center text-muted mt-5">
+        <p>No expenses found.</p>
+        <a href="/expenses/add" class="btn btn-outline-primary">Add your first expense</a>
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th>Category</th>
+                    <th class="text-end">Amount</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var expense in Expenses)
+                {
+                    <tr>
+                        <td>@expense.TransactionDate.ToString("dd MMM yyyy")</td>
+                        <td>@expense.Description</td>
+                        <td>
+                            @if (expense.Category is not null)
+                            {
+                                <span class="badge rounded-pill"
+                                      style="background-color: @(expense.Category.Colour ?? "#aaa")">
+                                    @expense.Category.Icon @expense.Category.Name
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </td>
+                        <td class="text-end fw-semibold">₹ @expense.Amount.ToString("N2")</td>
+                        <td class="text-end">
+                            <a href="/expenses/edit/@expense.GlobalId" class="btn btn-sm btn-outline-primary me-1">Edit</a>
+                            <button class="btn btn-sm btn-outline-danger"
+                                    @onclick="() => ConfirmDelete(expense)">Delete</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    @if (TotalPages > 1)
+    {
+        <nav>
+            <ul class="pagination justify-content-center">
+                <li class="page-item @(CurrentPage == 1 ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => GoToPage(CurrentPage - 1)">‹</button>
+                </li>
+                @for (int p = 1; p <= TotalPages; p++)
+                {
+                    var pageNum = p;
+                    <li class="page-item @(pageNum == CurrentPage ? "active" : "")">
+                        <button class="page-link" @onclick="() => GoToPage(pageNum)">@pageNum</button>
+                    </li>
+                }
+                <li class="page-item @(CurrentPage == TotalPages ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => GoToPage(CurrentPage + 1)">›</button>
+                </li>
+            </ul>
+        </nav>
+    }
+}
+
+<!-- Delete confirmation modal -->
+@if (ExpenseToDelete is not null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirm Delete</h5>
+                </div>
+                <div class="modal-body">
+                    <p>Delete <strong>@ExpenseToDelete.Description</strong> (₹ @ExpenseToDelete.Amount.ToString("N2"))?</p>
+                    <p class="text-danger mb-0">This action cannot be undone.</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+                    <button class="btn btn-danger" @onclick="DeleteConfirmed">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Expense> Expenses = [];
+    private List<Category> Categories = [];
+    private bool IsLoading = true;
+    private int TotalCount;
+    private int CurrentPage = 1;
+    private const int PageSize = 20;
+    private int TotalPages => (int)Math.Ceiling((double)TotalCount / PageSize);
+
+    private string? SearchTerm;
+    private string? SelectedCategoryId;
+    private DateTime? FromDate;
+    private DateTime? ToDate;
+    private Expense? ExpenseToDelete;
+
+    private System.Timers.Timer? _searchDebounce;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Categories = await ExpenseService.GetCategoriesAsync();
+        await LoadExpenses();
+    }
+
+    private async Task LoadExpenses()
+    {
+        IsLoading = true;
+        Guid? catId = Guid.TryParse(SelectedCategoryId, out var g) ? g : null;
+
+        var result = await ExpenseService.GetExpensesAsync(
+            page: CurrentPage,
+            pageSize: PageSize,
+            searchTerm: SearchTerm,
+            categoryGlobalId: catId,
+            fromDate: FromDate,
+            toDate: ToDate);
+
+        Expenses = result.Items;
+        TotalCount = result.TotalCount;
+        IsLoading = false;
+    }
+
+    private void OnSearchChanged()
+    {
+        _searchDebounce?.Dispose();
+        _searchDebounce = new System.Timers.Timer(400);
+        _searchDebounce.Elapsed += async (_, _) =>
+        {
+            _searchDebounce?.Dispose();
+            CurrentPage = 1;
+            await InvokeAsync(async () =>
+            {
+                await LoadExpenses();
+                StateHasChanged();
+            });
+        };
+        _searchDebounce.AutoReset = false;
+        _searchDebounce.Start();
+    }
+
+    private async Task GoToPage(int page)
+    {
+        CurrentPage = page;
+        await LoadExpenses();
+    }
+
+    private async Task ClearFilters()
+    {
+        SearchTerm = null;
+        SelectedCategoryId = null;
+        FromDate = null;
+        ToDate = null;
+        CurrentPage = 1;
+        await LoadExpenses();
+    }
+
+    private void ConfirmDelete(Expense expense) => ExpenseToDelete = expense;
+    private void CancelDelete() => ExpenseToDelete = null;
+
+    private async Task DeleteConfirmed()
+    {
+        if (ExpenseToDelete is not null)
+        {
+            await ExpenseService.DeleteExpenseAsync(ExpenseToDelete.GlobalId);
+            ExpenseToDelete = null;
+            await LoadExpenses();
+        }
+    }
+}

@@ -1,0 +1,170 @@
+@page "/expenses/add"
+@page "/expenses/edit/{GlobalId:guid}"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@inject ExpenseService ExpenseService
+@inject NavigationManager Nav
+
+<PageTitle>@(IsEditMode ? "Edit Expense" : "Add Expense")</PageTitle>
+
+<div class="d-flex align-items-center mb-3">
+    <a href="/expenses" class="btn btn-outline-secondary me-3">← Back</a>
+    <h1 class="mb-0">@(IsEditMode ? "Edit Expense" : "Add Expense")</h1>
+</div>
+
+@if (IsLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-6">
+            <EditForm Model="Model" OnValidSubmit="HandleSubmit">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label">Amount (₹) <span class="text-danger">*</span></label>
+                    <input type="number" step="0.01" min="0" class="form-control"
+                           @bind="Model.Amount" @bind:event="oninput" placeholder="0.00" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Description <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" @bind="Model.Description"
+                           placeholder="What was this expense for?" maxlength="500" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Date <span class="text-danger">*</span></label>
+                    <input type="date" class="form-control" @bind="Model.TransactionDate" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" @bind="SelectedCategoryId">
+                        <option value="">— None —</option>
+                        @foreach (var cat in Categories)
+                        {
+                            <option value="@cat.GlobalId">@cat.Icon @cat.Name</option>
+                        }
+                    </select>
+                </div>
+
+                @if (!string.IsNullOrEmpty(ErrorMessage))
+                {
+                    <div class="alert alert-danger">@ErrorMessage</div>
+                }
+
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary" disabled="@IsSaving">
+                        @if (IsSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        @(IsEditMode ? "Save Changes" : "Add Expense")
+                    </button>
+                    <a href="/expenses" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? GlobalId { get; set; }
+
+    private bool IsEditMode => GlobalId.HasValue;
+    private bool IsLoading = true;
+    private bool IsSaving = false;
+    private string? ErrorMessage;
+
+    private List<Category> Categories = [];
+    private string? SelectedCategoryId;
+
+    // Simple form model — avoids binding directly to EF entities
+    private ExpenseFormModel Model = new();
+
+    private class ExpenseFormModel
+    {
+        public decimal Amount { get; set; }
+        public string Description { get; set; } = string.Empty;
+        public DateTime TransactionDate { get; set; } = DateTime.Today;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Categories = await ExpenseService.GetCategoriesAsync();
+
+        if (IsEditMode)
+        {
+            var expense = await ExpenseService.GetExpenseAsync(GlobalId!.Value);
+            if (expense is null)
+            {
+                Nav.NavigateTo("/expenses");
+                return;
+            }
+
+            Model.Amount = expense.Amount;
+            Model.Description = expense.Description;
+            Model.TransactionDate = expense.TransactionDate;
+            SelectedCategoryId = expense.CategoryGlobalId?.ToString();
+        }
+
+        IsLoading = false;
+    }
+
+    private async Task HandleSubmit()
+    {
+        ErrorMessage = null;
+
+        if (Model.Amount <= 0)
+        {
+            ErrorMessage = "Amount must be greater than zero.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(Model.Description))
+        {
+            ErrorMessage = "Description is required.";
+            return;
+        }
+
+        IsSaving = true;
+
+        try
+        {
+            Guid? catGlobalId = Guid.TryParse(SelectedCategoryId, out var g) ? g : null;
+
+            if (IsEditMode)
+            {
+                await ExpenseService.UpdateExpenseAsync(new Expense
+                {
+                    GlobalId = GlobalId!.Value,
+                    Amount = Model.Amount,
+                    Description = Model.Description,
+                    TransactionDate = Model.TransactionDate,
+                    CategoryGlobalId = catGlobalId
+                });
+            }
+            else
+            {
+                await ExpenseService.CreateExpenseAsync(new Expense
+                {
+                    Amount = Model.Amount,
+                    Description = Model.Description,
+                    TransactionDate = Model.TransactionDate,
+                    CategoryGlobalId = catGlobalId
+                });
+            }
+
+            Nav.NavigateTo("/expenses");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to save: {ex.Message}";
+            IsSaving = false;
+        }
+    }
+}
