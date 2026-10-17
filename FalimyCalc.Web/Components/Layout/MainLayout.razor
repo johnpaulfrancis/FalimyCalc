@@ -1,4 +1,4 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
 <div class="page">
     <div class="sidebar">
@@ -6,8 +6,17 @@
     </div>
 
     <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+        <div class="top-row px-4 d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <span class="top-tagline d-none d-md-inline">Smart Family Expense Tracker</span>
+            </div>
+            <div class="d-flex align-items-center gap-3">
+                <button type="button" id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleAppTheme()" aria-label="Toggle theme" title="Toggle theme">
+                    <span class="theme-icon">🌙</span>
+                    <span class="theme-text d-none d-sm-inline">Dark Mode</span>
+                </button>
+                <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+            </div>
         </div>
 
         <article class="content px-4">

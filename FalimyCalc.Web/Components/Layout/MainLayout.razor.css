@@ -2,39 +2,80 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    min-height: 100vh;
 }
 
 main {
     flex: 1;
+    display: flex;
+    flex-direction: column;
 }
 
 .sidebar {
-    background-image: linear-gradient(180deg, rgb(5, 39, 103) 0%, #3a0647 70%);
+    background: var(--sidebar-bg, #0f172a);
+    border-right: 1px solid var(--sidebar-border, rgba(255, 255, 255, 0.08));
 }
 
 .top-row {
-    background-color: #f7f7f7;
-    border-bottom: 1px solid #d6d5d5;
-    justify-content: flex-end;
+    background-color: var(--dash-surface) !important;
+    border-bottom: 1px solid var(--dash-border) !important;
     height: 3.5rem;
     display: flex;
     align-items: center;
 }
 
-    .top-row ::deep a, .top-row ::deep .btn-link {
-        white-space: nowrap;
-        margin-left: 1.5rem;
-        text-decoration: none;
-    }
+.top-tagline {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--dash-text-muted);
+    letter-spacing: 0.02em;
+}
 
-    .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
-        text-decoration: underline;
-    }
+.theme-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: 50px;
+    background: var(--dash-surface-raised);
+    border: 1px solid var(--dash-border);
+    color: var(--dash-text);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 180ms ease;
+    user-select: none;
+}
 
-    .top-row ::deep a:first-child {
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
+.theme-toggle-btn:hover {
+    border-color: var(--c-indigo);
+    background: light-dark(rgba(99, 102, 241, 0.08), rgba(99, 102, 241, 0.2));
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.theme-icon {
+    font-size: 0.95rem;
+    line-height: 1;
+}
+
+.top-row ::deep a, .top-row ::deep .btn-link {
+    white-space: nowrap;
+    margin-left: 1.5rem;
+    text-decoration: none;
+    color: var(--dash-text-muted);
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
+    color: var(--c-indigo);
+}
+
+.top-row ::deep a:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 @media (max-width: 640.98px) {
     .top-row {
@@ -52,16 +93,17 @@ main {
     }
 
     .sidebar {
-        width: 250px;
+        width: 260px;
         height: 100vh;
         position: sticky;
         top: 0;
+        z-index: 10;
     }
 
     .top-row {
         position: sticky;
         top: 0;
-        z-index: 1;
+        z-index: 5;
     }
 
     .top-row.auth ::deep a:first-child {
@@ -72,27 +114,27 @@ main {
 
     .top-row, article {
         padding-left: 2rem !important;
-        padding-right: 1.5rem !important;
+        padding-right: 2rem !important;
     }
 }
 
 #blazor-error-ui {
-    color-scheme: light only;
-    background: lightyellow;
+    background: #1e1b4b;
+    color: #e0e7ff;
     bottom: 0;
-    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.4);
     box-sizing: border-box;
     display: none;
     left: 0;
-    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    padding: 0.75rem 1.5rem;
     position: fixed;
     width: 100%;
     z-index: 1000;
 }
 
-    #blazor-error-ui .dismiss {
-        cursor: pointer;
-        position: absolute;
-        right: 0.75rem;
-        top: 0.5rem;
-    }
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}

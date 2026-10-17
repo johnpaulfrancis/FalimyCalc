@@ -4,6 +4,10 @@
              x:Class="FalimyCalc.Mobile.Views.DashboardPage"
              Title="Dashboard">
 
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="⚙" Clicked="OnSettingsClicked" Order="Primary" Priority="0" />
+    </ContentPage.ToolbarItems>
+
     <RefreshView x:Name="RefreshView" Refreshing="OnRefreshing">
         <ScrollView>
             <VerticalStackLayout Padding="16" Spacing="16">
@@ -29,6 +33,23 @@
                 <Button Text="+ Add Expense"
                         BackgroundColor="#1976D2" TextColor="White"
                         CornerRadius="8" Clicked="OnAddExpenseClicked" />
+
+                <!-- Sync row -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Label x:Name="SyncStatusLabel"
+                           Grid.Column="0"
+                           Text="Not synced yet"
+                           FontSize="12" VerticalOptions="Center"
+                           TextColor="{AppThemeBinding Light=#888, Dark=#aaa}" />
+                    <Button x:Name="SyncButton"
+                            Grid.Column="1"
+                            Text="↕ Sync"
+                            FontSize="12" Padding="12,6"
+                            HeightRequest="36"
+                            BackgroundColor="#43A047" TextColor="White"
+                            CornerRadius="6"
+                            Clicked="OnSyncClicked" />
+                </Grid>
 
                 <!-- Recent expenses -->
                 <Label Text="Recent Expenses" FontSize="16" FontAttributes="Bold"

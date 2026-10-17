@@ -19,16 +19,25 @@ public static class MauiProgram
             });
 
         // ── Database ───────────────────────────────────────────────────────
-        // Singleton: one SQLite connection for the app lifetime
         builder.Services.AddSingleton<LocalDatabase>();
+
+        // ── HTTP client for sync ───────────────────────────────────────────
+        // Timeout is set here once — HttpClient does not allow changing it
+        // after the first request has been sent.
+        builder.Services.AddSingleton<HttpClient>(_ => new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        });
 
         // ── Services ───────────────────────────────────────────────────────
         builder.Services.AddSingleton<LocalExpenseService>();
+        builder.Services.AddSingleton<SyncClient>();
 
         // ── Pages ──────────────────────────────────────────────────────────
         builder.Services.AddTransient<DashboardPage>();
         builder.Services.AddTransient<ExpenseListPage>();
         builder.Services.AddTransient<ExpenseFormPage>();
+        builder.Services.AddTransient<SettingsPage>();
 
 #if DEBUG
         builder.Logging.AddDebug();

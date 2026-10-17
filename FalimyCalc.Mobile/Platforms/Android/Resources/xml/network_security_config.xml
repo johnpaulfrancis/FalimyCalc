@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Allow cleartext (HTTP) and self-signed HTTPS to local network addresses
+        during development. This covers the 192.168.x.x and 10.x.x.x ranges
+        commonly used on home/office Wi-Fi networks.
+
+        IMPORTANT: This config only affects the debug build. For production,
+        remove this file and use a proper TLS certificate.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.0.0/8</domain>
+        <domain includeSubdomains="true">172.16.0.0/12</domain>
+        <domain includeSubdomains="true">192.168.0.0/16</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

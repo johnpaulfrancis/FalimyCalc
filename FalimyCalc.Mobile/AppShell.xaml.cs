@@ -11,5 +11,6 @@ public partial class AppShell : Shell
         // Register routes that are navigated to programmatically
         // (not declared as tabs in the Shell XAML)
         Routing.RegisterRoute(nameof(ExpenseFormPage), typeof(ExpenseFormPage));
+        Routing.RegisterRoute(nameof(SettingsPage), typeof(SettingsPage));
     }
 }

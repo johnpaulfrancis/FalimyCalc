@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="FalimyCalc.Mobile.Views.SettingsPage"
+             Title="Settings">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="16">
+
+            <Label Text="Server Configuration" FontSize="18"
+                   FontAttributes="Bold" Margin="0,0,0,4" />
+
+            <Label FontSize="13" TextColor="{AppThemeBinding Light=#666, Dark=#aaa}">
+                <Label.FormattedText>
+                    <FormattedString>
+                        <Span Text="Enter your server's local network address. Example: " />
+                        <Span Text="https://192.168.1.100:7252" FontAttributes="Bold" />
+                    </FormattedString>
+                </Label.FormattedText>
+            </Label>
+
+            <Entry x:Name="ServerUrlEntry"
+                   Placeholder="https://192.168.1.x:7252"
+                   Keyboard="Url" ClearButtonVisibility="WhileEditing" />
+
+            <Button Text="Save &amp; Test Connection"
+                    BackgroundColor="#1976D2" TextColor="White"
+                    CornerRadius="8" Clicked="OnSaveClicked" />
+
+            <Border x:Name="StatusBorder" IsVisible="False"
+                    Padding="12" StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="8" />
+                </Border.StrokeShape>
+                <Label x:Name="StatusLabel" />
+            </Border>
+
+            <BoxView HeightRequest="1" Color="#E0E0E0" Margin="0,8" />
+
+            <Label Text="About" FontSize="18" FontAttributes="Bold" />
+            <Label Text="FalimyCalc — Family Expense Manager" FontSize="13"
+                   TextColor="{AppThemeBinding Light=#666, Dark=#aaa}" />
+            <Label x:Name="DeviceIdLabel" FontSize="11"
+                   TextColor="{AppThemeBinding Light=#aaa, Dark=#666}" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

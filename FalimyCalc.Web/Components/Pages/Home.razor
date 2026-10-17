@@ -6,118 +6,257 @@
 
 <PageTitle>Dashboard — FalimyCalc</PageTitle>
 
-<h1>Dashboard</h1>
-<p class="text-muted">@DateTime.Now.ToString("MMMM yyyy")</p>
+@* ── Header ──────────────────────────────────────────────────────── *@
+<div class="dash-header">
+    <div>
+        <h1 class="dash-title">FalimyCalc</h1>
+        <p class="dash-subtitle">@_greeting, @DateTime.Now.ToString("dddd, dd MMMM yyyy")</p>
+    </div>
+    <div class="dash-header-actions">
+        <a href="/expenses/add" class="btn-primary-glow">
+            <span class="btn-icon">＋</span> Add Expense
+        </a>
+    </div>
+</div>
 
 @if (IsLoading)
 {
-    <p><em>Loading...</em></p>
+    <div class="skeleton-wrapper">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+    </div>
 }
 else
 {
-    <!-- Monthly total -->
-    <div class="row g-3 mb-4">
-        <div class="col-md-4">
-            <div class="card border-0 shadow-sm h-100">
-                <div class="card-body">
-                    <p class="text-muted mb-1 small">This Month's Spending</p>
-                    <h2 class="mb-0 fw-bold text-danger">₹ @MonthlyTotal.ToString("N2")</h2>
-                    <p class="text-muted small mt-1 mb-0">@DateTime.Now.ToString("MMMM yyyy")</p>
+    @* ── Alerts ───────────────────────────────────────────────────── *@
+    @if (_spendingAlerts.Any())
+    {
+        <div class="alerts-row">
+            @foreach (var alert in _spendingAlerts)
+            {
+                <div class="dash-alert dash-alert--@alert.Severity">
+                    <span class="alert-icon">@alert.Icon</span>
+                    <span class="alert-text">@alert.Message</span>
                 </div>
-            </div>
+            }
         </div>
-        <div class="col-md-4">
-            <div class="card border-0 shadow-sm h-100">
-                <div class="card-body">
-                    <p class="text-muted mb-1 small">Recent Transactions</p>
-                    <h2 class="mb-0 fw-bold">@RecentExpenses.Count</h2>
-                    <p class="text-muted small mt-1 mb-0">Last 5 expenses</p>
-                </div>
+    }
+
+    @* ── KPI Cards ────────────────────────────────────────────────── *@
+    <div class="kpi-grid">
+        <div class="kpi-card kpi-card--primary">
+            <div class="kpi-icon-wrap">💳</div>
+            <div class="kpi-content">
+                <p class="kpi-label">This Month's Spending</p>
+                <h2 class="kpi-value">₹ @MonthlyTotal.ToString("N0")</h2>
+                <p class="kpi-sub">@DateTime.Now.ToString("MMMM yyyy")</p>
             </div>
+            <div class="kpi-glow"></div>
         </div>
-        <div class="col-md-4">
-            <div class="card border-0 shadow-sm h-100">
-                <div class="card-body d-flex flex-column justify-content-between">
-                    <p class="text-muted mb-1 small">Quick Actions</p>
-                    <a href="/expenses/add" class="btn btn-primary btn-sm">+ Add Expense</a>
-                    <a href="/expenses" class="btn btn-outline-secondary btn-sm mt-2">View All</a>
-                </div>
+        <div class="kpi-card kpi-card--info">
+            <div class="kpi-icon-wrap">🧾</div>
+            <div class="kpi-content">
+                <p class="kpi-label">Transactions</p>
+                <h2 class="kpi-value">@RecentExpenses.Count</h2>
+                <p class="kpi-sub">Last 5 recorded</p>
             </div>
+            <div class="kpi-glow"></div>
+        </div>
+        <div class="kpi-card kpi-card--success">
+            <div class="kpi-icon-wrap">📊</div>
+            <div class="kpi-content">
+                <p class="kpi-label">Daily Average</p>
+                <h2 class="kpi-value">₹ @_dailyAvg.ToString("N0")</h2>
+                <p class="kpi-sub">this month so far</p>
+            </div>
+            <div class="kpi-glow"></div>
+        </div>
+        <div class="kpi-card kpi-card--accent">
+            <div class="kpi-icon-wrap">🏷️</div>
+            <div class="kpi-content">
+                <p class="kpi-label">Top Category</p>
+                <h2 class="kpi-value kpi-value--sm">@(_topCategory ?? "—")</h2>
+                <p class="kpi-sub">highest spend</p>
+            </div>
+            <div class="kpi-glow"></div>
         </div>
     </div>
 
-    <div class="row g-3">
-        <!-- Spending by category -->
-        <div class="col-md-5">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-transparent fw-semibold">
-                    Spending by Category — @DateTime.Now.ToString("MMMM")
-                </div>
-                <div class="card-body">
-                    @if (!CategoryTotals.Any())
-                    {
-                        <p class="text-muted mb-0">No expenses this month.</p>
-                    }
-                    else
-                    {
-                        @foreach (var item in CategoryTotals.OrderByDescending(x => x.Value))
+    @* ── Charts Row ───────────────────────────────────────────────── *@
+    <div class="charts-grid">
+
+        @* Category Donut Chart *@
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <span class="chart-card-title">Category Breakdown</span>
+                <span class="chart-card-badge">@DateTime.Now.ToString("MMM")</span>
+            </div>
+            @if (!CategoryTotals.Any())
+            {
+                <div class="chart-empty">No expenses this month</div>
+            }
+            else
+            {
+                <div class="donut-layout">
+                    <svg viewBox="0 0 120 120" class="donut-svg">
+                        @{
+                            var donutItems = CategoryTotals.OrderByDescending(x => x.Value).ToList();
+                            double dTotal  = (double)donutItems.Sum(x => x.Value);
+                            double dOffset = 0;
+                            double dCirc   = 2 * Math.PI * 46;
+                        }
+                        <circle cx="60" cy="60" r="46" fill="none"
+                                stroke="var(--dash-donut-track)" stroke-width="16" />
+                        @for (int di = 0; di < donutItems.Count; di++)
                         {
-                            var pct = MonthlyTotal > 0
-                                ? (int)Math.Round(item.Value / MonthlyTotal * 100)
-                                : 0;
-                            <div class="mb-2">
-                                <div class="d-flex justify-content-between small mb-1">
-                                    <span>@item.Key</span>
-                                    <span class="fw-semibold">₹ @item.Value.ToString("N2") (@pct%)</span>
-                                </div>
-                                <div class="progress" style="height:6px">
-                                    <div class="progress-bar bg-danger" style="width:@pct%"></div>
-                                </div>
+                            var dPct  = dTotal > 0 ? (double)donutItems[di].Value / dTotal : 0;
+                            var dDash = dPct * dCirc;
+                            var dGap  = dCirc - dDash;
+                            var dCol  = _palette[di % _palette.Length];
+                            var dRot  = dOffset * 360;
+                            <circle cx="60" cy="60" r="46" fill="none"
+                                    stroke="@dCol" stroke-width="16"
+                                    stroke-dasharray="@dDash.ToString("F2") @dGap.ToString("F2")"
+                                    stroke-dashoffset="@((dCirc * 0.25).ToString("F2"))"
+                                    transform="rotate(@dRot.ToString("F1") 60 60)"
+                                    class="donut-segment" />
+                            dOffset += dPct;
+                        }
+                        <text x="60" y="56" text-anchor="middle" class="donut-center-label">₹</text>
+                        <text x="60" y="70" text-anchor="middle" class="donut-center-value">@(MonthlyTotal >= 1000 ? (MonthlyTotal / 1000m).ToString("F1") + "k" : MonthlyTotal.ToString("N0"))</text>
+                    </svg>
+                    <div class="donut-legend">
+                        @for (int li = 0; li < Math.Min(donutItems.Count, 6); li++)
+                        {
+                            var lPct = dTotal > 0 ? (int)Math.Round((double)donutItems[li].Value / dTotal * 100) : 0;
+                            <div class="legend-item">
+                                <span class="legend-dot" style="background:@_palette[li % _palette.Length]"></span>
+                                <span class="legend-name">@donutItems[li].Key</span>
+                                <span class="legend-pct">@lPct%</span>
                             </div>
                         }
-                    }
+                    </div>
                 </div>
-            </div>
+            }
         </div>
 
-        <!-- Recent expenses -->
-        <div class="col-md-7">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-transparent fw-semibold">
-                    Recent Expenses
-                </div>
-                <div class="card-body p-0">
-                    @if (!RecentExpenses.Any())
-                    {
-                        <p class="text-muted p-3 mb-0">No expenses yet.
-                            <a href="/expenses/add">Add your first one</a>.
-                        </p>
+        @* 6-Month Bar Chart *@
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <span class="chart-card-title">6-Month Trend</span>
+                <span class="chart-card-badge">Historical</span>
+            </div>
+            @if (!_trends.Any())
+            {
+                <div class="chart-empty">No trend data yet</div>
+            }
+            else
+            {
+                <div class="bar-chart-wrap">
+                    @{
+                        var trendMax = _trends.Max(t => t.Total);
+                        if (trendMax == 0) trendMax = 1;
                     }
-                    else
+                    @foreach (var trend in _trends)
                     {
-                        <ul class="list-group list-group-flush">
-                            @foreach (var expense in RecentExpenses)
-                            {
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <div class="fw-semibold">@expense.Description</div>
-                                        <small class="text-muted">
-                                            @expense.TransactionDate.ToString("dd MMM yyyy")
-                                            @if (expense.Category is not null)
-                                            {
-                                                <span class="ms-2">· @expense.Category.Icon @expense.Category.Name</span>
-                                            }
-                                        </small>
-                                    </div>
-                                    <span class="fw-bold text-danger">₹ @expense.Amount.ToString("N2")</span>
-                                </li>
-                            }
-                        </ul>
-                        <div class="p-2 text-end">
-                            <a href="/expenses" class="btn btn-sm btn-link">View all →</a>
+                        var hPct = (int)Math.Round((double)(trend.Total / trendMax) * 100);
+                        var isCurrent = trend.Month == DateTime.Now.Month && trend.Year == DateTime.Now.Year;
+                        <div class="bar-col">
+                            <span class="bar-amount">@(trend.Total >= 1000 ? (trend.Total / 1000m).ToString("F0") + "k" : trend.Total.ToString("N0"))</span>
+                            <div class="bar-track">
+                                <div class="bar-fill @(isCurrent ? "bar-fill--current" : "")"
+                                     style="height:@hPct%"></div>
+                            </div>
+                            <span class="bar-label">@trend.MonthName.Split(' ')[0]</span>
                         </div>
                     }
                 </div>
+            }
+        </div>
+    </div>
+
+    @* ── Bottom Row: Recent + Quick Actions ───────────────────────── *@
+    <div class="bottom-grid">
+
+        @* Recent Expenses *@
+        <div class="chart-card recent-card">
+            <div class="chart-card-header">
+                <span class="chart-card-title">Recent Transactions</span>
+                <a href="/expenses" class="view-all-link">View all →</a>
+            </div>
+            @if (!RecentExpenses.Any())
+            {
+                <div class="chart-empty">No expenses yet. <a href="/expenses/add" class="link-accent">Add one</a>.</div>
+            }
+            else
+            {
+                <ul class="tx-list">
+                    @foreach (var exp in RecentExpenses)
+                    {
+                        <li class="tx-item">
+                            <div class="tx-icon">@(exp.Category?.Icon ?? "💰")</div>
+                            <div class="tx-details">
+                                <span class="tx-name">@exp.Description</span>
+                                <span class="tx-meta">
+                                    @exp.TransactionDate.ToString("dd MMM")
+                                    @if (exp.Category != null)
+                                    {
+                                        <span class="tx-cat-pill"
+                                              style="background:@(exp.Category.Colour ?? "#6366f1")20;color:@(exp.Category.Colour ?? "#6366f1")">
+                                            @exp.Category.Name
+                                        </span>
+                                    }
+                                </span>
+                            </div>
+                            <span class="tx-amount">₹ @exp.Amount.ToString("N2")</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        @* Quick Actions + Top Spends *@
+        <div class="side-panel">
+            <div class="chart-card quick-actions-card">
+                <div class="chart-card-header">
+                    <span class="chart-card-title">Quick Actions</span>
+                </div>
+                <div class="quick-actions">
+                    <a href="/expenses/add" class="qa-btn qa-btn--blue"><span>💳</span><span>Add Expense</span></a>
+                    <a href="/expenses"     class="qa-btn qa-btn--purple"><span>📋</span><span>All Expenses</span></a>
+                    <a href="/categories"   class="qa-btn qa-btn--teal"><span>🏷️</span><span>Categories</span></a>
+                    <a href="/reports"      class="qa-btn qa-btn--amber"><span>📊</span><span>Reports</span></a>
+                </div>
+            </div>
+            <div class="chart-card top-cats-card">
+                <div class="chart-card-header">
+                    <span class="chart-card-title">Top Spends</span>
+                </div>
+                @if (!CategoryTotals.Any())
+                {
+                    <div class="chart-empty">No data</div>
+                }
+                else
+                {
+                    {
+                        var topItemsL  = CategoryTotals.OrderByDescending(x => x.Value).Take(4).ToList();
+                        double tpTotalL = (double)CategoryTotals.Values.Sum();
+                        for (int ti = 0; ti < topItemsL.Count; ti++)
+                        {
+                            var tpPct = tpTotalL > 0 ? (int)Math.Round((double)topItemsL[ti].Value / tpTotalL * 100) : 0;
+                            <div class="top-cat-row">
+                                <span class="top-cat-name">@topItemsL[ti].Key</span>
+                                <div class="top-cat-bar-track">
+                                    <div class="top-cat-bar"
+                                         style="width:@tpPct%;background:@_palette[ti % _palette.Length]"></div>
+                                </div>
+                                <span class="top-cat-amount">₹ @topItemsL[ti].Value.ToString("N0")</span>
+                            </div>
+                        }
+                    }
+                }
             </div>
         </div>
     </div>
@@ -128,17 +267,52 @@ else
     private decimal MonthlyTotal;
     private Dictionary<string, decimal> CategoryTotals = [];
     private List<Expense> RecentExpenses = [];
+    private decimal _dailyAvg;
+    private string? _topCategory;
+    private string _greeting = "Good morning";
+    private List<ExpenseService.MonthlyTrendItem> _trends = [];
+    private List<DashAlert> _spendingAlerts = [];
+
+    private string[] _palette = ["#6366f1","#22d3ee","#f59e0b","#10b981","#f43f5e","#8b5cf6","#06b6d4","#84cc16"];
 
     protected override async Task OnInitializedAsync()
     {
-        var now = DateTime.Now;
+        var hour = DateTime.Now.Hour;
+        _greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
+        var now = DateTime.Now;
         MonthlyTotal = await ExpenseService.GetMonthlyTotalAsync(now.Year, now.Month);
         CategoryTotals = await ExpenseService.GetMonthlyTotalsByCategoryAsync(now.Year, now.Month);
 
         var (items, _) = await ExpenseService.GetExpensesAsync(page: 1, pageSize: 5);
         RecentExpenses = items;
 
+        _dailyAvg = now.Day > 0 ? Math.Round(MonthlyTotal / now.Day, 2) : 0;
+        _topCategory = CategoryTotals.OrderByDescending(x => x.Value).FirstOrDefault().Key;
+        _trends = await ExpenseService.GetSpendingTrendsAsync(6);
+
+        BuildAlerts(now);
         IsLoading = false;
     }
+
+    private void BuildAlerts(DateTime now)
+    {
+        // Alert if daily avg is high (> 1000 INR/day)
+        if (_dailyAvg > 1000)
+            _spendingAlerts.Add(new("warning", "⚠️", $"Daily average is ₹{_dailyAvg:N0}. You're on track for a high-spend month."));
+
+        // Alert if no expenses yet this month
+        if (MonthlyTotal == 0)
+            _spendingAlerts.Add(new("info", "ℹ️", "No expenses recorded this month. Add your first expense to start tracking."));
+
+        // Alert if this month is already > last month (compare trend)
+        if (_trends.Count >= 2)
+        {
+            var lastMonth = _trends[^2].Total;
+            if (lastMonth > 0 && MonthlyTotal > lastMonth * 1.2m)
+                _spendingAlerts.Add(new("danger", "🚨", $"Spending is 20%+ above last month (₹{lastMonth:N0} → ₹{MonthlyTotal:N0})."));
+        }
+    }
+
+    private record DashAlert(string Severity, string Icon, string Message);
 }

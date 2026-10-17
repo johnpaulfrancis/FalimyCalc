@@ -199,4 +199,50 @@ public class ExpenseService
             .Select(g => new { Category = g.Key, Total = g.Sum(e => e.Amount) })
             .ToDictionaryAsync(x => x.Category, x => x.Total);
     }
+
+    public record CategorySummaryItem(string Name, string? Icon, string? Colour, decimal Total, int Count);
+
+    public async Task<List<CategorySummaryItem>> GetDetailedCategorySummaryAsync(int year, int month)
+    {
+        var expenses = await _db.Expenses
+            .Include(e => e.Category)
+            .Where(e => !e.IsDeleted && e.TransactionDate.Year == year && e.TransactionDate.Month == month)
+            .ToListAsync();
+
+        return expenses
+            .GroupBy(e => e.Category != null ? e.Category.Name : "Uncategorised")
+            .Select(g =>
+            {
+                var firstCat = g.FirstOrDefault()?.Category;
+                return new CategorySummaryItem(
+                    g.Key,
+                    firstCat?.Icon ?? "📁",
+                    firstCat?.Colour ?? "#6c757d",
+                    g.Sum(e => e.Amount),
+                    g.Count()
+                );
+            })
+            .OrderByDescending(x => x.Total)
+            .ToList();
+    }
+
+    public record MonthlyTrendItem(int Year, int Month, string MonthName, decimal Total);
+
+    public async Task<List<MonthlyTrendItem>> GetSpendingTrendsAsync(int monthsCount = 6)
+    {
+        var result = new List<MonthlyTrendItem>();
+        var current = DateTime.Today;
+
+        for (int i = monthsCount - 1; i >= 0; i--)
+        {
+            var date = current.AddMonths(-i);
+            var total = await _db.Expenses
+                .Where(e => !e.IsDeleted && e.TransactionDate.Year == date.Year && e.TransactionDate.Month == date.Month)
+                .SumAsync(e => (decimal?)e.Amount) ?? 0m;
+
+            result.Add(new MonthlyTrendItem(date.Year, date.Month, date.ToString("MMM yyyy"), total));
+        }
+
+        return result;
+    }
 }

@@ -1,0 +1,253 @@
+@page "/reports"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Services
+@inject ExpenseService ExpenseService
+
+<PageTitle>Reports & Analytics — FalimyCalc</PageTitle>
+
+<div class="dash-header mb-4">
+    <div>
+        <h1 class="dash-title">Reports & Analytics</h1>
+        <p class="dash-subtitle">Track family spending trends and category breakdowns</p>
+    </div>
+</div>
+
+<!-- Month / Year Selector Bar -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <div class="col-auto">
+                <label class="col-form-label fw-semibold">Select Period:</label>
+            </div>
+            <div class="col-auto">
+                <select class="form-select" @bind="SelectedMonth" @bind:after="LoadReportDataAsync">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var monthName = new DateTime(2000, m, 1).ToString("MMMM");
+                        <option value="@m">@monthName</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <select class="form-select" @bind="SelectedYear" @bind:after="LoadReportDataAsync">
+                    @for (int y = DateTime.Today.Year - 2; y <= DateTime.Today.Year + 1; y++)
+                    {
+                        <option value="@y">@y</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-outline-secondary btn-sm" @onclick="GoToPreviousMonth">← Previous Month</button>
+                <button class="btn btn-outline-primary btn-sm ms-1" @onclick="GoToCurrentMonth">Current Month</button>
+                <button class="btn btn-outline-secondary btn-sm ms-1" @onclick="GoToNextMonth">Next Month →</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (IsLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="text-muted mt-2">Loading reports data...</p>
+    </div>
+}
+else
+{
+    <!-- Stat Highlights -->
+    <div class="kpi-grid mb-4">
+        <div class="kpi-card kpi-card--primary">
+            <div class="kpi-icon-wrap">💳</div>
+            <div class="kpi-content">
+                <p class="kpi-label">Total Spending</p>
+                <h2 class="kpi-value text-danger">₹ @MonthTotal.ToString("N2")</h2>
+                <p class="kpi-sub">for @CurrentMonthLabel</p>
+            </div>
+            <div class="kpi-glow"></div>
+        </div>
+        <div class="kpi-card kpi-card--info">
+            <div class="kpi-icon-wrap">🧾</div>
+            <div class="kpi-content">
+                <p class="kpi-label">Total Transactions</p>
+                <h2 class="kpi-value">@TotalTransactions</h2>
+                <p class="kpi-sub">recorded expenses</p>
+            </div>
+            <div class="kpi-glow"></div>
+        </div>
+        <div class="kpi-card kpi-card--success">
+            <div class="kpi-icon-wrap">📊</div>
+            <div class="kpi-content">
+                <p class="kpi-label">Average per Expense</p>
+                <h2 class="kpi-value text-primary">₹ @(TotalTransactions > 0 ? (MonthTotal / TotalTransactions).ToString("N2") : "0.00")</h2>
+                <p class="kpi-sub">average cost</p>
+            </div>
+            <div class="kpi-glow"></div>
+        </div>
+        <div class="kpi-card kpi-card--accent">
+            <div class="kpi-icon-wrap">🏷️</div>
+            <div class="kpi-content">
+                <p class="kpi-label">Top Category</p>
+                <h2 class="kpi-value kpi-value--sm text-truncate">
+                    @(CategorySummaries.FirstOrDefault() != null ? $"{CategorySummaries[0].Icon} {CategorySummaries[0].Name}" : "None")
+                </h2>
+                <p class="kpi-sub">
+                    @(CategorySummaries.FirstOrDefault() != null ? $"₹ {CategorySummaries[0].Total:N2}" : "No data")
+                </p>
+            </div>
+            <div class="kpi-glow"></div>
+        </div>
+    </div>
+
+    <!-- Category Breakdown & Spending Trend -->
+    <div class="row g-4 mb-4">
+        <!-- Category Breakdown -->
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-transparent fw-semibold py-3">
+                    Category Breakdown — @CurrentMonthLabel
+                </div>
+                <div class="card-body">
+                    @if (!CategorySummaries.Any())
+                    {
+                        <div class="text-center py-5 text-muted">
+                            <p class="mb-0">No expenses recorded for @CurrentMonthLabel.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Category</th>
+                                        <th class="text-center">Count</th>
+                                        <th>Distribution</th>
+                                        <th class="text-end">Amount</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var cat in CategorySummaries)
+                                    {
+                                        var pct = MonthTotal > 0 ? (int)Math.Round((cat.Total / MonthTotal) * 100) : 0;
+                                        <tr>
+                                            <td>
+                                                <span class="badge rounded-pill me-1" style="background-color: @(cat.Colour ?? "#6c757d")">
+                                                    @cat.Icon @cat.Name
+                                                </span>
+                                            </td>
+                                            <td class="text-center text-muted">@cat.Count</td>
+                                            <td style="width: 35%;">
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <div class="progress flex-grow-1" style="height: 8px;">
+                                                        <div class="progress-bar"
+                                                             style="width: @pct%; background-color: @(cat.Colour ?? "#1976D2");"></div>
+                                                    </div>
+                                                    <span class="small text-muted" style="min-width: 35px;">@pct%</span>
+                                                </div>
+                                            </td>
+                                            <td class="text-end fw-bold">₹ @cat.Total.ToString("N2")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- 6-Month Spending Trend -->
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-transparent fw-semibold py-3">
+                    6-Month Spending Trend
+                </div>
+                <div class="card-body">
+                    @if (!Trends.Any())
+                    {
+                        <p class="text-muted">No trend data available.</p>
+                    }
+                    else
+                    {
+                        var maxTrend = Trends.Max(t => t.Total);
+                        if (maxTrend == 0) maxTrend = 1;
+
+                        <div class="d-flex flex-column gap-3 mt-2">
+                            @foreach (var trend in Trends)
+                            {
+                                var pct = (int)Math.Round((trend.Total / maxTrend) * 100);
+                                var isSelected = trend.Year == SelectedYear && trend.Month == SelectedMonth;
+                                <div class="p-2 rounded @(isSelected ? "bg-light border" : "")">
+                                    <div class="d-flex justify-content-between small mb-1">
+                                        <span class="fw-semibold @(isSelected ? "text-primary" : "")">
+                                            @trend.MonthName @(isSelected ? "(Selected)" : "")
+                                        </span>
+                                        <span class="fw-bold">₹ @trend.Total.ToString("N2")</span>
+                                    </div>
+                                    <div class="progress" style="height: 10px;">
+                                        <div class="progress-bar @(isSelected ? "bg-primary" : "bg-secondary")"
+                                             style="width: @pct%;"></div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private int SelectedMonth = DateTime.Today.Month;
+    private int SelectedYear = DateTime.Today.Year;
+    private bool IsLoading = true;
+
+    private decimal MonthTotal = 0;
+    private int TotalTransactions = 0;
+    private List<ExpenseService.CategorySummaryItem> CategorySummaries = [];
+    private List<ExpenseService.MonthlyTrendItem> Trends = [];
+
+    private string CurrentMonthLabel => new DateTime(SelectedYear, SelectedMonth, 1).ToString("MMMM yyyy");
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadReportDataAsync();
+    }
+
+    private async Task LoadReportDataAsync()
+    {
+        IsLoading = true;
+
+        MonthTotal = await ExpenseService.GetMonthlyTotalAsync(SelectedYear, SelectedMonth);
+        CategorySummaries = await ExpenseService.GetDetailedCategorySummaryAsync(SelectedYear, SelectedMonth);
+        TotalTransactions = CategorySummaries.Sum(c => c.Count);
+
+        Trends = await ExpenseService.GetSpendingTrendsAsync(6);
+
+        IsLoading = false;
+    }
+
+    private async Task GoToPreviousMonth()
+    {
+        var dt = new DateTime(SelectedYear, SelectedMonth, 1).AddMonths(-1);
+        SelectedYear = dt.Year;
+        SelectedMonth = dt.Month;
+        await LoadReportDataAsync();
+    }
+
+    private async Task GoToNextMonth()
+    {
+        var dt = new DateTime(SelectedYear, SelectedMonth, 1).AddMonths(1);
+        SelectedYear = dt.Year;
+        SelectedMonth = dt.Month;
+        await LoadReportDataAsync();
+    }
+
+    private async Task GoToCurrentMonth()
+    {
+        SelectedYear = DateTime.Today.Year;
+        SelectedMonth = DateTime.Today.Month;
+        await LoadReportDataAsync();
+    }
+}

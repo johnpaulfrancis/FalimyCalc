@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base app theme — MUST inherit from MaterialComponents for Shell TabBar to work -->
+    <style name="Maui.MainTheme" parent="Theme.MaterialComponents.DayNight">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <!-- Suppress the default Material splash screen background -->
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

@@ -20,7 +20,7 @@ public class LocalExpenseService
         _localDb = localDb;
     }
 
-    private async Task<SQLiteAsyncConnection> DbAsync() =>
+    public async Task<SQLiteAsyncConnection> GetDbAsync() =>
         await _localDb.GetConnectionAsync();
 
     // ── Device ID ──────────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ public class LocalExpenseService
     {
         if (_deviceId is not null) return _deviceId;
 
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         var meta = await db.FindAsync<SyncMetadata>(SyncMetadata.DeviceIdKey);
 
         if (meta is null)
@@ -53,7 +53,7 @@ public class LocalExpenseService
 
     public async Task<List<LocalCategory>> GetCategoriesAsync()
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         return await db.Table<LocalCategory>()
             .Where(c => !c.IsDeleted)
             .OrderBy(c => c.Name)
@@ -62,7 +62,7 @@ public class LocalExpenseService
 
     public async Task<LocalCategory> CreateCategoryAsync(LocalCategory category)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         category.GlobalId = Guid.NewGuid();
         category.CreatedAt = DateTime.UtcNow;
         category.ModifiedAt = DateTime.UtcNow;
@@ -74,7 +74,7 @@ public class LocalExpenseService
 
     public async Task UpdateCategoryAsync(LocalCategory category)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         category.ModifiedAt = DateTime.UtcNow;
         category.SyncStatus = SyncStatus.PendingUpdate;
         await db.UpdateAsync(category);
@@ -82,7 +82,7 @@ public class LocalExpenseService
 
     public async Task DeleteCategoryAsync(LocalCategory category)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         category.IsDeleted = true;
         category.ModifiedAt = DateTime.UtcNow;
         category.SyncStatus = SyncStatus.PendingDelete;
@@ -99,7 +99,7 @@ public class LocalExpenseService
         int page = 1,
         int pageSize = 20)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         var query = db.Table<LocalExpense>().Where(e => !e.IsDeleted);
 
         // sqlite-net-pcl supports basic Where chaining
@@ -132,14 +132,14 @@ public class LocalExpenseService
 
     public async Task<LocalExpense?> GetExpenseAsync(Guid globalId)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         return await db.Table<LocalExpense>()
             .FirstOrDefaultAsync(e => e.GlobalId == globalId && !e.IsDeleted);
     }
 
     public async Task<LocalExpense> CreateExpenseAsync(LocalExpense expense)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         expense.GlobalId = Guid.NewGuid();
         expense.CreatedAt = DateTime.UtcNow;
         expense.ModifiedAt = DateTime.UtcNow;
@@ -151,7 +151,7 @@ public class LocalExpenseService
 
     public async Task UpdateExpenseAsync(LocalExpense expense)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         expense.ModifiedAt = DateTime.UtcNow;
 
         // Don't downgrade PendingCreate to PendingUpdate —
@@ -164,7 +164,7 @@ public class LocalExpenseService
 
     public async Task DeleteExpenseAsync(LocalExpense expense)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         expense.IsDeleted = true;
         expense.ModifiedAt = DateTime.UtcNow;
 
@@ -182,7 +182,7 @@ public class LocalExpenseService
 
     public async Task<decimal> GetMonthlyTotalAsync(int year, int month)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         var expenses = await db.Table<LocalExpense>()
             .Where(e => !e.IsDeleted)
             .ToListAsync();
@@ -194,7 +194,7 @@ public class LocalExpenseService
 
     public async Task<List<LocalExpense>> GetRecentExpensesAsync(int count = 5)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         return await db.Table<LocalExpense>()
             .Where(e => !e.IsDeleted)
             .OrderByDescending(e => e.TransactionDate)
@@ -206,7 +206,7 @@ public class LocalExpenseService
 
     public async Task<List<LocalPendingTransaction>> GetPendingTransactionsAsync()
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         return await db.Table<LocalPendingTransaction>()
             .Where(p => !p.IsDeleted && p.Status == PendingTransactionStatus.Pending)
             .OrderByDescending(p => p.CreatedAt)
@@ -216,7 +216,7 @@ public class LocalExpenseService
     public async Task<LocalPendingTransaction> CreatePendingTransactionAsync(
         LocalPendingTransaction pending)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         pending.GlobalId = Guid.NewGuid();
         pending.CreatedAt = DateTime.UtcNow;
         pending.ModifiedAt = DateTime.UtcNow;
@@ -230,7 +230,7 @@ public class LocalExpenseService
         LocalPendingTransaction pending,
         LocalExpense createdExpense)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
 
         // Create the expense
         await CreateExpenseAsync(createdExpense);
@@ -245,7 +245,7 @@ public class LocalExpenseService
 
     public async Task RejectPendingTransactionAsync(LocalPendingTransaction pending)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         pending.Status = PendingTransactionStatus.Rejected;
         pending.ModifiedAt = DateTime.UtcNow;
         pending.SyncStatus = SyncStatus.PendingUpdate;
@@ -260,7 +260,7 @@ public class LocalExpenseService
                        List<LocalPendingTransaction> PendingTransactions)>
         GetPendingSyncItemsAsync()
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
 
         var expenses = await db.Table<LocalExpense>()
             .Where(e => e.SyncStatus != SyncStatus.Synced)
@@ -285,7 +285,7 @@ public class LocalExpenseService
         IEnumerable<Guid> categoryIds,
         IEnumerable<Guid> pendingIds)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
 
         foreach (var id in expenseIds)
         {
@@ -335,7 +335,7 @@ public class LocalExpenseService
     /// <summary>Gets the last RowVersion successfully pulled from the server.</summary>
     public async Task<long> GetLastSyncedRowVersionAsync()
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         var meta = await db.FindAsync<SyncMetadata>(SyncMetadata.LastSyncedRowVersionKey);
         return meta is null ? 0 : long.Parse(meta.Value);
     }
@@ -343,7 +343,7 @@ public class LocalExpenseService
     /// <summary>Stores the RowVersion after a successful pull.</summary>
     public async Task SetLastSyncedRowVersionAsync(long rowVersion)
     {
-        var db = await DbAsync();
+        var db = await GetDbAsync();
         var existing = await db.FindAsync<SyncMetadata>(SyncMetadata.LastSyncedRowVersionKey);
         if (existing is null)
             await db.InsertAsync(new SyncMetadata

@@ -6,9 +6,16 @@
 
 <PageTitle>Categories</PageTitle>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1>Categories</h1>
-    <button class="btn btn-primary" @onclick="ShowAddForm">+ Add Category</button>
+<div class="dash-header mb-4">
+    <div>
+        <h1 class="dash-title">Categories</h1>
+        <p class="dash-subtitle">Organize and color-code your spending categories</p>
+    </div>
+    <div>
+        <button class="btn-primary-glow border-0" @onclick="ShowAddForm">
+            <span class="btn-icon">＋</span> Add Category
+        </button>
+    </div>
 </div>
 
 @if (IsLoading)
