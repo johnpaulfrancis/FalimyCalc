@@ -1,4 +1,12 @@
 @inherits LayoutComponentBase
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject UserSessionService Session
+@inject ExpenseService ExpenseService
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
 
 <div class="page">
     <div class="sidebar">
@@ -10,12 +18,82 @@
             <div class="d-flex align-items-center gap-2">
                 <span class="top-tagline d-none d-md-inline">Smart Family Expense Tracker</span>
             </div>
-            <div class="d-flex align-items-center gap-3">
+            <div class="d-flex align-items-center gap-2">
+                @if (Session.IsAuthenticated && Session.CurrentUser is not null)
+                {
+                    @* Direct Switch Profile Quick Button *@
+                    <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1 rounded-pill px-3 py-1 shadow-sm fw-semibold"
+                            type="button"
+                            @onclick="OpenProfileModal"
+                            title="Switch Family Profile">
+                        <span>🔄</span>
+                        <span class="d-none d-sm-inline">Switch Profile</span>
+                    </button>
+
+                    @* Active Profile Dropdown Pill *@
+                    <div class="position-relative">
+                        <button class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-2 rounded-pill px-3 py-1 shadow-sm"
+                                type="button"
+                                @onclick="ToggleUserMenu"
+                                aria-expanded="@IsUserMenuOpen">
+                            <span style="font-size: 1.1rem;">@Session.CurrentUser.Avatar</span>
+                            <span class="fw-semibold">@Session.CurrentUser.Name</span>
+                            <span class="badge bg-secondary small" style="font-size: 0.65rem;">@Session.CurrentUser.Role</span>
+                            <span style="font-size: 0.7rem; opacity: 0.7;">@(IsUserMenuOpen ? "▲" : "▼")</span>
+                        </button>
+
+                        @if (IsUserMenuOpen)
+                        {
+                            <div class="user-menu-backdrop" @onclick="CloseUserMenu"></div>
+                            <div class="user-menu-dropdown shadow-lg animate-in">
+                                <div class="px-3 py-2 border-bottom">
+                                    <div class="text-muted" style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700;">Active Profile</div>
+                                    <div class="d-flex align-items-center gap-2 mt-1">
+                                        <span style="font-size: 1.4rem;">@Session.CurrentUser.Avatar</span>
+                                        <div>
+                                            <div class="fw-bold" style="font-size: 0.95rem;">@Session.CurrentUser.Name</div>
+                                            <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.7rem;">@Session.CurrentUser.Role</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="py-1">
+                                    <button class="dropdown-item d-flex align-items-center gap-2 py-2" @onclick="OpenProfileModal">
+                                        <span>🔄</span>
+                                        <span>Switch Profile</span>
+                                    </button>
+                                    <a class="dropdown-item d-flex align-items-center gap-2 py-2" href="/login?switch=1" @onclick="CloseUserMenu">
+                                        <span>🔑</span>
+                                        <span>Switch via Login Screen</span>
+                                    </a>
+                                    @if (Session.CurrentUser.Role == "Admin")
+                                    {
+                                        <a class="dropdown-item d-flex align-items-center gap-2 py-2" href="/profiles" @onclick="CloseUserMenu">
+                                            <span>👥</span>
+                                            <span>Manage Profiles</span>
+                                        </a>
+                                    }
+                                </div>
+                                <div class="border-top py-1">
+                                    <button class="dropdown-item d-flex align-items-center gap-2 py-2 text-danger fw-semibold" @onclick="Logout">
+                                        <span>🚪</span>
+                                        <span>Sign Out</span>
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <a href="/login" class="btn btn-sm btn-primary rounded-pill px-3 fw-semibold">
+                        🔑 Login
+                    </a>
+                }
+
                 <button type="button" id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleAppTheme()" aria-label="Toggle theme" title="Toggle theme">
                     <span class="theme-icon">🌙</span>
                     <span class="theme-text d-none d-sm-inline">Dark Mode</span>
                 </button>
-                <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
             </div>
         </div>
 
@@ -25,8 +103,472 @@
     </main>
 </div>
 
+@* Profile Switcher Modal *@
+@if (IsProfileModalOpen)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseProfileModal">
+        <div class="profile-modal-card animate-in" @onclick:stopPropagation="true">
+            <div class="modal-header-custom">
+                <div class="d-flex align-items-center gap-2">
+                    <span style="font-size: 1.4rem;">🔄</span>
+                    <h5 class="m-0 fw-bold">@(IsInPinMode ? $"PIN for {SelectedMember?.Name}" : "Switch Profile")</h5>
+                </div>
+                <button type="button" class="btn-close-custom" @onclick="CloseProfileModal" aria-label="Close">✕</button>
+            </div>
+
+            <div class="modal-body-custom">
+                @if (!IsInPinMode)
+                {
+                    <p class="text-muted small mb-3">Select who is using FalimyCalc right now:</p>
+                    <div class="profile-cards-grid">
+                        @foreach (var member in Members)
+                        {
+                            var isCurrent = member.GlobalId == Session.CurrentUser?.GlobalId;
+                            <button type="button"
+                                    class="profile-card-item @(isCurrent ? "profile-card-item--current" : "")"
+                                    @onclick="() => SelectMember(member)">
+                                <div class="profile-card-avatar" style="background:@(member.Colour ?? "#6366f1");">
+                                    @member.Avatar
+                                </div>
+                                <div class="profile-card-info">
+                                    <div class="fw-bold profile-card-name">@member.Name</div>
+                                    <div class="small text-muted profile-card-role">@member.Role</div>
+                                </div>
+                                <div class="profile-card-meta">
+                                    @if (isCurrent)
+                                    {
+                                        <span class="badge bg-success rounded-pill px-2 py-1" style="font-size: 0.68rem;">Active</span>
+                                    }
+                                    else if (!string.IsNullOrEmpty(member.PinHash))
+                                    {
+                                        <span title="PIN Protected" style="font-size: 0.95rem;">🔒</span>
+                                    }
+                                </div>
+                            </button>
+                        }
+                    </div>
+
+                    <div class="mt-4 pt-3 border-top d-flex justify-content-between align-items-center">
+                        <a href="/login?switch=1" class="text-decoration-none small text-primary" @onclick="CloseProfileModal">
+                            🔑 Full Login Screen
+                        </a>
+                        <button type="button" class="btn btn-sm btn-secondary rounded-pill px-3" @onclick="CloseProfileModal">
+                            Cancel
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    @* PIN Entry View *@
+                    <div class="text-center py-2">
+                        <div class="pin-avatar mx-auto mb-2" style="background:@(SelectedMember?.Colour ?? "#6366f1");">
+                            @SelectedMember?.Avatar
+                        </div>
+                        <div class="fw-bold mb-1" style="font-size: 1.1rem;">@SelectedMember?.Name</div>
+                        <div class="text-muted small mb-3">Enter 4-digit security PIN</div>
+
+                        <div class="pin-dots d-flex justify-content-center gap-2 mb-3">
+                            @for (int i = 0; i < 4; i++)
+                            {
+                                <div class="pin-dot @(EnteredPin.Length > i ? "pin-dot--on" : "")"></div>
+                            }
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(PinError))
+                        {
+                            <div class="alert alert-danger py-1 px-2 small mb-3 fw-semibold">
+                                ⚠️ @PinError
+                            </div>
+                        }
+
+                        <div class="numpad mx-auto mb-3">
+                            @foreach (var key in new[] { "1","2","3","4","5","6","7","8","9","","0","⌫" })
+                            {
+                                if (key == "")
+                                {
+                                    <div></div>
+                                }
+                                else
+                                {
+                                    <button type="button" class="numpad-key @(key == "⌫" ? "numpad-key--del" : "")"
+                                            @onclick="() => NumpadPress(key)">
+                                        @key
+                                    </button>
+                                }
+                            }
+                        </div>
+
+                        <button type="button" class="btn btn-link text-muted text-decoration-none small" @onclick="BackToProfileList">
+                            ← Back to profiles
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+<style>
+    /* User Dropdown */
+    .user-menu-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 998;
+        background: transparent;
+    }
+    .user-menu-dropdown {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 8px);
+        width: 240px;
+        background: var(--dash-surface, #ffffff);
+        border: 1px solid var(--dash-border, #e2e8f0);
+        border-radius: 16px;
+        z-index: 999;
+        overflow: hidden;
+    }
+    .user-menu-dropdown .dropdown-item {
+        background: transparent;
+        border: none;
+        width: 100%;
+        text-align: left;
+        padding: 0.5rem 1rem;
+        font-size: 0.88rem;
+        color: var(--dash-text-main, #1e293b);
+        text-decoration: none;
+        cursor: pointer;
+        transition: background 0.15s ease;
+    }
+    .user-menu-dropdown .dropdown-item:hover {
+        background: rgba(99, 102, 241, 0.08);
+        color: var(--c-indigo, #6366f1);
+    }
+
+    /* Modal Backdrop & Card */
+    .modal-backdrop-custom {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.6);
+        backdrop-filter: blur(4px);
+        z-index: 1050;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+    }
+    .profile-modal-card {
+        background: var(--dash-surface, #ffffff);
+        color: var(--dash-text-main, #1e293b);
+        border: 1px solid var(--dash-border, #e2e8f0);
+        border-radius: 20px;
+        width: 100%;
+        max-width: 440px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+        overflow: hidden;
+    }
+    .modal-header-custom {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.25rem 1.5rem;
+        border-bottom: 1px solid var(--dash-border, #e2e8f0);
+    }
+    .btn-close-custom {
+        background: transparent;
+        border: none;
+        font-size: 1.1rem;
+        color: var(--dash-text-muted, #64748b);
+        cursor: pointer;
+        padding: 0.25rem 0.5rem;
+        border-radius: 6px;
+    }
+    .btn-close-custom:hover {
+        color: var(--dash-text-main, #1e293b);
+        background: rgba(0,0,0,0.05);
+    }
+    .modal-body-custom {
+        padding: 1.5rem;
+    }
+
+    /* Profile Selection Tiles */
+    .profile-cards-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        max-height: 340px;
+        overflow-y: auto;
+    }
+    .profile-card-item {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        padding: 0.75rem 1rem;
+        border-radius: 14px;
+        border: 1.5px solid var(--dash-border, #e2e8f0);
+        background: var(--dash-surface, #ffffff);
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition: all 0.18s ease;
+        width: 100%;
+    }
+    .profile-card-item:hover {
+        border-color: var(--c-indigo, #6366f1);
+        background: rgba(99, 102, 241, 0.05);
+        transform: translateY(-1px);
+    }
+    .profile-card-item--current {
+        border-color: rgba(34, 197, 94, 0.5);
+        background: rgba(34, 197, 94, 0.04);
+    }
+    .profile-card-avatar {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.4rem;
+        flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    }
+    .profile-card-info {
+        flex-grow: 1;
+        overflow: hidden;
+    }
+    .profile-card-name {
+        font-size: 0.95rem;
+        color: var(--dash-text-main, #1e293b);
+    }
+    .profile-card-role {
+        font-size: 0.78rem;
+    }
+
+    /* PIN Entry */
+    .pin-avatar {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.8rem;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    }
+    .pin-dots {
+        margin: 0.5rem 0 1rem;
+    }
+    .pin-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 2px solid var(--dash-border, #cbd5e1);
+        background: transparent;
+        transition: all 0.15s ease;
+    }
+    .pin-dot--on {
+        background: var(--c-indigo, #6366f1);
+        border-color: var(--c-indigo, #6366f1);
+        transform: scale(1.15);
+    }
+    .numpad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.6rem;
+        max-width: 220px;
+    }
+    .numpad-key {
+        height: 48px;
+        border-radius: 12px;
+        border: 1px solid var(--dash-border, #e2e8f0);
+        background: var(--dash-surface-raised, #f8fafc);
+        color: var(--dash-text-main, #1e293b);
+        font-size: 1.25rem;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+    }
+    .numpad-key:hover {
+        background: var(--c-indigo, #6366f1);
+        color: #ffffff;
+        border-color: var(--c-indigo, #6366f1);
+    }
+    .numpad-key--del {
+        font-size: 1.1rem;
+    }
+
+    /* Animation */
+    .animate-in {
+        animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.97); }
+        to { opacity: 1; transform: scale(1); }
+    }
+</style>
+
+@code {
+    private bool IsUserMenuOpen = false;
+    private bool IsProfileModalOpen = false;
+    private bool IsInPinMode = false;
+    private FamilyMember? SelectedMember;
+    private string EnteredPin = "";
+    private string? PinError;
+    private List<FamilyMember> Members = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.OnSessionChanged += HandleSessionChanged;
+        await LoadMembersAsync();
+    }
+
+    private void HandleSessionChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadMembersAsync()
+    {
+        try
+        {
+            Members = await ExpenseService.GetFamilyMembersAsync();
+        }
+        catch { }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && Session.IsAuthenticated && Session.CurrentUser is not null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("falimyAuth.setSession", Session.CurrentUser.GlobalId.ToString());
+            }
+            catch { }
+        }
+    }
+
+    private void ToggleUserMenu() => IsUserMenuOpen = !IsUserMenuOpen;
+    private void CloseUserMenu() => IsUserMenuOpen = false;
+
+    private async Task OpenProfileModal()
+    {
+        IsUserMenuOpen = false;
+        IsInPinMode = false;
+        SelectedMember = null;
+        EnteredPin = "";
+        PinError = null;
+        await LoadMembersAsync();
+        IsProfileModalOpen = true;
+    }
+
+    private void CloseProfileModal()
+    {
+        IsProfileModalOpen = false;
+        IsInPinMode = false;
+        SelectedMember = null;
+        EnteredPin = "";
+        PinError = null;
+    }
+
+    private async Task SelectMember(FamilyMember member)
+    {
+        if (member.GlobalId == Session.CurrentUser?.GlobalId)
+        {
+            CloseProfileModal();
+            return;
+        }
+
+        SelectedMember = member;
+
+        if (!string.IsNullOrEmpty(member.PinHash))
+        {
+            EnteredPin = "";
+            PinError = null;
+            IsInPinMode = true;
+        }
+        else
+        {
+            await PerformSwitch(member);
+        }
+    }
+
+    private async Task NumpadPress(string key)
+    {
+        if (key == "⌫")
+        {
+            if (EnteredPin.Length > 0)
+                EnteredPin = EnteredPin[..^1];
+            PinError = null;
+            return;
+        }
+
+        if (EnteredPin.Length >= 4) return;
+        EnteredPin += key;
+
+        if (EnteredPin.Length == 4)
+            await VerifyAndSwitch();
+    }
+
+    private async Task VerifyAndSwitch()
+    {
+        if (SelectedMember is null) return;
+
+        var valid = await ExpenseService.VerifyMemberPinAsync(SelectedMember.GlobalId, EnteredPin);
+        if (!valid)
+        {
+            PinError = "Incorrect PIN. Try again.";
+            EnteredPin = "";
+            return;
+        }
+
+        await PerformSwitch(SelectedMember);
+    }
+
+    private async Task PerformSwitch(FamilyMember member)
+    {
+        Session.Login(member);
+        try
+        {
+            await JS.InvokeVoidAsync("falimyAuth.setSession", member.GlobalId.ToString());
+        }
+        catch { }
+
+        CloseProfileModal();
+        Nav.NavigateTo(Nav.Uri, forceLoad: true);
+    }
+
+    private void BackToProfileList()
+    {
+        IsInPinMode = false;
+        EnteredPin = "";
+        PinError = null;
+        SelectedMember = null;
+    }
+
+    private async Task Logout()
+    {
+        IsUserMenuOpen = false;
+        Session.Logout();
+        try
+        {
+            await JS.InvokeVoidAsync("falimyAuth.clearSession");
+        }
+        catch { }
+        Nav.NavigateTo("/login", forceLoad: true);
+    }
+
+    public void Dispose()
+    {
+        Session.OnSessionChanged -= HandleSessionChanged;
+    }
+}

@@ -1,0 +1,591 @@
+@page "/login"
+@layout LoginLayout
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@using FalimyCalc.Web.Components.Layout
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Login — FalimyCalc</PageTitle>
+
+<div class="login-card">
+    @* Brand Header *@
+    <div class="login-brand">
+        <div class="login-brand-icon">👨‍👩‍👧‍👦</div>
+        <h1 class="login-brand-title">FalimyCalc</h1>
+        <p class="login-brand-sub">
+            @(Step == LoginStep.Credentials ? "Sign in to continue" :
+              Step == LoginStep.SelectProfile ? "Who's using the app today?" :
+              $"Enter PIN for {SelectedMember?.Name}")
+        </p>
+    </div>
+
+    @if (Step == LoginStep.Credentials)
+    {
+        <div class="login-step animate-in">
+            <div class="field-group">
+                <label class="field-label">Username</label>
+                <input type="text" class="field-input"
+                       placeholder="e.g. dad or mom"
+                       @bind="Username" @bind:event="oninput"
+                       @onkeydown="HandleCredentialKeyDown"
+                       autocomplete="username" autofocus />
+            </div>
+
+            <div class="field-group">
+                <label class="field-label">Password</label>
+                <div class="field-input-wrap">
+                    <input type="@(ShowPassword ? "text" : "password")"
+                           class="field-input"
+                           placeholder="Enter your password"
+                           @bind="Password" @bind:event="oninput"
+                           @onkeydown="HandleCredentialKeyDown"
+                           autocomplete="current-password" />
+                    <button class="field-eye-btn" type="button"
+                            @onclick="() => ShowPassword = !ShowPassword"
+                            title="Toggle visibility">
+                        @(ShowPassword ? "🙈" : "👁️")
+                    </button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(LoginError))
+            {
+                <div class="login-error">⚠️ @LoginError</div>
+            }
+
+            @if (IsFirstLogin)
+            {
+                <div class="login-info">
+                    🔐 First login — the password you enter will be saved as your account password.
+                </div>
+            }
+
+            <button class="login-btn" @onclick="HandleLogin" disabled="@IsLoading">
+                @if (IsLoading)
+                {
+                    <span class="spinner"></span>
+                }
+                else
+                {
+                    <span>Sign In →</span>
+                }
+            </button>
+        </div>
+    }
+    else if (Step == LoginStep.SelectProfile)
+    {
+        <div class="login-step animate-in">
+            <div class="profile-grid">
+                @foreach (var member in Members)
+                {
+                    <button class="profile-tile @(SelectedMember?.GlobalId == member.GlobalId ? "profile-tile--active" : "")"
+                            type="button" @onclick="() => SelectProfile(member)">
+                        <div class="profile-avatar" style="background:@(member.Colour ?? "#6366f1");">
+                            @member.Avatar
+                        </div>
+                        <span class="profile-name">@member.Name</span>
+                        <span class="profile-role">@member.Role</span>
+                        @if (!string.IsNullOrEmpty(member.PinHash))
+                        {
+                            <span class="profile-lock">🔒</span>
+                        }
+                    </button>
+                }
+            </div>
+            <button class="back-link" @onclick="BackToLogin">← Back to login</button>
+        </div>
+    }
+    else if (Step == LoginStep.EnterPin)
+    {
+        <div class="login-step animate-in text-center">
+            <div class="pin-profile-avatar" style="background:@(SelectedMember?.Colour ?? "#6366f1");">
+                @SelectedMember?.Avatar
+            </div>
+            <div class="pin-profile-name">@SelectedMember?.Name</div>
+
+            <div class="pin-dots">
+                @for (int i = 0; i < 4; i++)
+                {
+                    <div class="pin-dot @(EnteredPin.Length > i ? "pin-dot--on" : "")"></div>
+                }
+            </div>
+
+            @if (!string.IsNullOrEmpty(PinError))
+            {
+                <div class="pin-error">@PinError</div>
+            }
+
+            <div class="numpad">
+                @foreach (var key in new[] { "1","2","3","4","5","6","7","8","9","","0","⌫" })
+                {
+                    if (key == "")
+                    {
+                        <div></div>
+                    }
+                    else
+                    {
+                        <button class="numpad-key @(key == "⌫" ? "numpad-key--del" : "")"
+                                type="button" @onclick="() => NumpadPress(key)">
+                            @key
+                        </button>
+                    }
+                }
+            </div>
+
+            <button class="back-link" @onclick="BackToProfiles">← Back</button>
+        </div>
+    }
+</div>
+
+<style>
+    /* ─── Login Card ─────────────────────────────────────────── */
+    .login-card {
+        width: 100%;
+        max-width: 440px;
+        background: var(--dash-surface);
+        border: 1px solid var(--dash-border);
+        border-radius: 24px;
+        padding: 2.5rem 2rem 2rem;
+        box-shadow: var(--shadow-card);
+    }
+
+    /* ─── Brand ──────────────────────────────────────────────── */
+    .login-brand {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .login-brand-icon {
+        font-size: 3.2rem;
+        line-height: 1;
+        margin-bottom: 0.5rem;
+    }
+    .login-brand-title {
+        font-size: 1.8rem;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        background: linear-gradient(135deg, var(--c-indigo), var(--c-cyan));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin: 0 0 0.3rem;
+    }
+    .login-brand-sub {
+        color: var(--dash-text-muted);
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    /* ─── Fields ─────────────────────────────────────────────── */
+    .login-step { display: flex; flex-direction: column; gap: 1.1rem; }
+    .field-group { display: flex; flex-direction: column; gap: 0.35rem; }
+    .field-label {
+        font-size: 0.82rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--dash-text-muted);
+    }
+    .field-input-wrap { position: relative; }
+    .field-input {
+        width: 100%;
+        padding: 0.75rem 1rem;
+        background: var(--input-bg);
+        border: 1.5px solid var(--input-border);
+        border-radius: 12px;
+        color: var(--input-text);
+        font-family: var(--font-main);
+        font-size: 0.95rem;
+        transition: border-color 0.15s, box-shadow 0.15s;
+        box-sizing: border-box;
+    }
+    .field-input:focus {
+        outline: none;
+        border-color: var(--c-indigo);
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+    }
+    .field-input::placeholder {
+        color: var(--input-placeholder, #64748b) !important;
+        opacity: 1 !important;
+        -webkit-text-fill-color: var(--input-placeholder, #64748b) !important;
+    }
+    .field-input-wrap .field-input { padding-right: 3rem; }
+    .field-eye-btn {
+        position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%);
+        background: none; border: none; cursor: pointer; padding: 0; font-size: 1.1rem;
+        line-height: 1; color: var(--dash-text-muted);
+    }
+
+    /* ─── Alerts ─────────────────────────────────────────────── */
+    .login-error {
+        background: light-dark(rgba(244,63,94,0.08), rgba(244,63,94,0.15));
+        border: 1px solid light-dark(rgba(244,63,94,0.3), rgba(244,63,94,0.4));
+        color: light-dark(#9f1239, #fda4af);
+        border-radius: 10px;
+        padding: 0.65rem 0.9rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    .login-info {
+        background: light-dark(rgba(99,102,241,0.06), rgba(99,102,241,0.14));
+        border: 1px solid light-dark(rgba(99,102,241,0.25), rgba(99,102,241,0.35));
+        color: light-dark(#3730a3, #c7d2fe);
+        border-radius: 10px;
+        padding: 0.65rem 0.9rem;
+        font-size: 0.82rem;
+    }
+    .pin-error {
+        color: light-dark(#9f1239, #fda4af);
+        font-size: 0.85rem; font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+
+    /* ─── Sign In Button ─────────────────────────────────────── */
+    .login-btn {
+        width: 100%;
+        padding: 0.85rem;
+        background: linear-gradient(135deg, var(--c-indigo), var(--c-violet));
+        border: none;
+        border-radius: 12px;
+        color: #fff;
+        font-family: var(--font-main);
+        font-size: 1rem;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 4px 18px rgba(99,102,241,0.4);
+        transition: box-shadow 0.15s, transform 0.15s, opacity 0.15s;
+        display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+        margin-top: 0.3rem;
+    }
+    .login-btn:hover:not(:disabled) {
+        box-shadow: 0 6px 24px rgba(99,102,241,0.55);
+        transform: translateY(-1px);
+    }
+    .login-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+
+    .spinner {
+        width: 20px; height: 20px;
+        border: 2.5px solid rgba(255,255,255,0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        display: inline-block;
+    }
+    @@keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Profile Grid (Step 2) ──────────────────────────────── */
+    .profile-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+        gap: 0.75rem;
+    }
+    .profile-tile {
+        position: relative;
+        display: flex; flex-direction: column; align-items: center;
+        gap: 0.4rem;
+        padding: 1rem 0.5rem;
+        background: var(--input-bg);
+        border: 1.5px solid var(--input-border);
+        border-radius: 16px;
+        cursor: pointer;
+        transition: all 0.18s ease;
+        color: var(--dash-text);
+        font-family: var(--font-main);
+    }
+    .profile-tile:hover {
+        border-color: var(--c-indigo);
+        transform: translateY(-3px);
+        box-shadow: 0 8px 20px rgba(99,102,241,0.15);
+    }
+    .profile-tile--active {
+        border-color: var(--c-indigo);
+        background: light-dark(rgba(99,102,241,0.07), rgba(99,102,241,0.18));
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.25);
+    }
+    .profile-avatar {
+        width: 56px; height: 56px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.8rem;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    }
+    .profile-name {
+        font-weight: 700; font-size: 0.9rem;
+        color: var(--dash-text);
+        text-overflow: ellipsis; overflow: hidden; white-space: nowrap;
+        max-width: 100%;
+    }
+    .profile-role {
+        font-size: 0.7rem; font-weight: 600;
+        color: var(--dash-text-muted);
+        background: var(--dash-border);
+        padding: 0.15rem 0.5rem;
+        border-radius: 50px;
+    }
+    .profile-lock {
+        position: absolute; top: 6px; right: 8px;
+        font-size: 0.75rem;
+    }
+
+    /* ─── PIN Step ───────────────────────────────────────────── */
+    .pin-profile-avatar {
+        width: 80px; height: 80px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 2.4rem; margin: 0 auto 0.6rem;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+    }
+    .pin-profile-name {
+        font-weight: 800; font-size: 1.2rem;
+        color: var(--dash-text);
+        margin-bottom: 1.2rem;
+    }
+    .pin-dots {
+        display: flex; justify-content: center; gap: 14px;
+        margin-bottom: 1.5rem;
+    }
+    .pin-dot {
+        width: 16px; height: 16px; border-radius: 50%;
+        border: 2px solid var(--input-border);
+        background: transparent;
+        transition: all 0.15s;
+    }
+    .pin-dot--on {
+        background: var(--c-indigo);
+        border-color: var(--c-indigo);
+        box-shadow: 0 0 8px rgba(99,102,241,0.5);
+        transform: scale(1.15);
+    }
+
+    /* ─── Numpad ─────────────────────────────────────────────── */
+    .numpad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        max-width: 220px;
+        margin: 0 auto 1.2rem;
+    }
+    .numpad-key {
+        aspect-ratio: 1;
+        border-radius: 50%;
+        border: 1.5px solid var(--input-border);
+        background: var(--input-bg);
+        color: var(--dash-text);
+        font-family: var(--font-main);
+        font-size: 1.2rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.14s;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .numpad-key:hover {
+        background: var(--c-indigo);
+        color: #fff;
+        border-color: var(--c-indigo);
+        box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+    }
+    .numpad-key:active { transform: scale(0.9); }
+    .numpad-key--del { font-size: 1.35rem; }
+
+    /* ─── Back link ──────────────────────────────────────────── */
+    .back-link {
+        background: none; border: none; cursor: pointer;
+        color: var(--dash-text-muted);
+        font-family: var(--font-main);
+        font-size: 0.85rem; font-weight: 600;
+        padding: 0.25rem 0;
+        transition: color 0.15s;
+        align-self: center;
+    }
+    .back-link:hover { color: var(--c-indigo); }
+
+    /* ─── Animation ──────────────────────────────────────────── */
+    .animate-in { animation: slideUp 0.22s ease-out; }
+    @@keyframes slideUp {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+</style>
+
+@code {
+    private enum LoginStep { Credentials, SelectProfile, EnterPin }
+
+    private LoginStep Step = LoginStep.Credentials;
+    private string Username = "";
+    private string Password = "";
+    private bool ShowPassword = false;
+    private bool IsLoading = false;
+    private bool IsFirstLogin = false;
+    private string? LoginError;
+
+    private List<FamilyMember> Members = [];
+    private FamilyMember? SelectedMember;
+
+    private string EnteredPin = "";
+    private string? PinError;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery(Name = "switch")]
+    private string? SwitchParam { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Members = await ExpenseService.GetFamilyMembersAsync();
+
+        if (SwitchParam == "1" || SwitchParam == "true")
+        {
+            Step = LoginStep.SelectProfile;
+            return;
+        }
+
+        // Already logged in? Go home
+        if (Session.IsAuthenticated)
+        {
+            Nav.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl);
+            return;
+        }
+    }
+
+    private async Task HandleCredentialKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await HandleLogin();
+    }
+
+    private async Task HandleLogin()
+    {
+        LoginError = null;
+        if (string.IsNullOrWhiteSpace(Username))
+        {
+            LoginError = "Please enter your username.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(Password))
+        {
+            LoginError = "Please enter your password.";
+            return;
+        }
+
+        IsLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            // First-login hint: no password set yet?
+            var memberCheck = Members.FirstOrDefault(m =>
+                string.Equals(m.Username, Username.Trim(), StringComparison.OrdinalIgnoreCase));
+            IsFirstLogin = memberCheck is not null && string.IsNullOrEmpty(memberCheck.PasswordHash);
+
+            var result = await ExpenseService.ValidateLoginAsync(Username.Trim(), Password);
+            if (result is null)
+            {
+                LoginError = "Invalid username or password.";
+                IsFirstLogin = false;
+                return;
+            }
+
+            // Refresh member list after potential password set
+            Members = await ExpenseService.GetFamilyMembersAsync();
+
+            if (Members.Count == 1)
+            {
+                SelectedMember = Members[0];
+                await ProceedAfterProfileSelect();
+            }
+            else
+            {
+                Step = LoginStep.SelectProfile;
+            }
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task SelectProfile(FamilyMember member)
+    {
+        SelectedMember = member;
+        await ProceedAfterProfileSelect();
+    }
+
+    private async Task ProceedAfterProfileSelect()
+    {
+        if (SelectedMember is null) return;
+
+        if (!string.IsNullOrEmpty(SelectedMember.PinHash))
+        {
+            EnteredPin = "";
+            PinError = null;
+            Step = LoginStep.EnterPin;
+        }
+        else
+        {
+            await CompleteLogin();
+        }
+    }
+
+    private async Task NumpadPress(string key)
+    {
+        if (key == "⌫")
+        {
+            if (EnteredPin.Length > 0)
+                EnteredPin = EnteredPin[..^1];
+            PinError = null;
+            return;
+        }
+
+        if (EnteredPin.Length >= 4) return;
+        EnteredPin += key;
+
+        if (EnteredPin.Length == 4)
+            await VerifyPin();
+    }
+
+    private async Task VerifyPin()
+    {
+        if (SelectedMember is null) return;
+
+        var valid = await ExpenseService.VerifyMemberPinAsync(SelectedMember.GlobalId, EnteredPin);
+        if (!valid)
+        {
+            PinError = "Incorrect PIN. Try again.";
+            EnteredPin = "";
+            return;
+        }
+
+        await CompleteLogin();
+    }
+
+    private async Task CompleteLogin()
+    {
+        if (SelectedMember is null) return;
+        Session.Login(SelectedMember);
+        try
+        {
+            await JS.InvokeVoidAsync("falimyAuth.setSession", SelectedMember.GlobalId.ToString());
+        }
+        catch { }
+        var target = string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl;
+        Nav.NavigateTo(target);
+    }
+
+    private void BackToLogin()
+    {
+        Step = LoginStep.Credentials;
+        SelectedMember = null;
+        LoginError = null;
+        IsFirstLogin = false;
+    }
+
+    private void BackToProfiles()
+    {
+        Step = LoginStep.SelectProfile;
+        EnteredPin = "";
+        PinError = null;
+        SelectedMember = null;
+    }
+}

@@ -1,0 +1,461 @@
+@page "/profiles"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>Manage Profiles — FalimyCalc</PageTitle>
+
+@if (!Session.IsAuthenticated)
+{
+    <div class="text-center py-5">
+        <p class="text-muted">You must be logged in to access this page.</p>
+        <a href="/login" class="btn btn-primary">Go to Login</a>
+    </div>
+}
+else if (Session.CurrentUser?.Role != "Admin")
+{
+    <div class="text-center py-5">
+        <div style="font-size:3rem;">🚫</div>
+        <h4 class="mt-3">Access Denied</h4>
+        <p class="text-muted">Only Admin users can manage profiles.</p>
+        <a href="/" class="btn btn-outline-secondary">← Back to Home</a>
+    </div>
+}
+else
+{
+    <div class="container-fluid px-0">
+        <!-- Header -->
+        <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+            <div>
+                <h3 class="fw-bold mb-0">👥 Manage Profiles</h3>
+                <p class="text-muted small mb-0">Add, edit or remove family member profiles</p>
+            </div>
+            <button class="btn btn-primary fw-semibold" @onclick="ShowAddForm">
+                ➕ Add Profile
+            </button>
+        </div>
+
+        @if (!string.IsNullOrEmpty(StatusMessage))
+        {
+            <div class="alert @(StatusIsError ? "alert-danger" : "alert-success") alert-dismissible py-2 mb-3">
+                @StatusMessage
+                <button type="button" class="btn-close btn-sm" @onclick="() => StatusMessage = null"></button>
+            </div>
+        }
+
+        <!-- Profile Cards -->
+        @if (IsLoading)
+        {
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary"></div>
+                <p class="text-muted small mt-2">Loading profiles...</p>
+            </div>
+        }
+        else
+        {
+            <div class="row g-3">
+                @foreach (var member in Members)
+                {
+                    <div class="col-12 col-md-6 col-lg-4">
+                        <div class="profile-manage-card">
+                            <div class="d-flex align-items-center gap-3 mb-3">
+                                <div class="profile-avatar-sm" style="background-color: @(member.Colour ?? "#4f46e5");">
+                                    @member.Avatar
+                                </div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-bold">@member.Name</div>
+                                    <span class="badge @(member.Role == "Admin" ? "bg-primary" : "bg-secondary") opacity-75 small">
+                                        @member.Role
+                                    </span>
+                                    @if (member.IsDefault)
+                                    {
+                                        <span class="badge bg-warning text-dark ms-1 small">Default</span>
+                                    }
+                                </div>
+                            </div>
+
+                            <div class="profile-info-row">
+                                <span class="label">Username</span>
+                                <span class="value">@(string.IsNullOrEmpty(member.Username) ? "—" : member.Username)</span>
+                            </div>
+                            <div class="profile-info-row">
+                                <span class="label">Password</span>
+                                <span class="value">@(string.IsNullOrEmpty(member.PasswordHash) ? "⚠️ Not set" : "●●●●●●")</span>
+                            </div>
+                            <div class="profile-info-row">
+                                <span class="label">PIN Lock</span>
+                                <span class="value">@(string.IsNullOrEmpty(member.PinHash) ? "None" : "🔒 Set")</span>
+                            </div>
+
+                            <div class="d-flex gap-2 mt-3 flex-wrap">
+                                <a class="btn btn-sm btn-outline-success d-flex align-items-center gap-1"
+                                   href="/ai-advisor"
+                                   title="View AI Financial Analysis for this profile">
+                                    <span>✨</span> <span>AI Advice</span>
+                                </a>
+                                <button class="btn btn-sm btn-outline-primary flex-grow-1"
+                                        @onclick="() => ShowEditForm(member)">
+                                    ✏️ Edit
+                                </button>
+                                @if (member.Id != Session.CurrentUser?.Id)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            @onclick="() => ConfirmDelete(member)">
+                                        🗑️
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        <!-- Add / Edit Modal -->
+        @if (ShowForm)
+        {
+            <div class="modal-backdrop-custom" @onclick="CloseForm"></div>
+            <div class="modal-panel shadow-lg animate-fade-in">
+                <div class="modal-panel-header">
+                    <h5 class="mb-0 fw-bold">@(IsEditing ? $"Edit — {EditingMember.Name}" : "Add New Profile")</h5>
+                    <button class="btn-close" @onclick="CloseForm"></button>
+                </div>
+                <div class="modal-panel-body">
+                    <!-- Avatar + Colour row -->
+                    <div class="d-flex align-items-center gap-3 mb-4">
+                        <div class="profile-avatar-lg" style="background-color: @(EditingMember.Colour ?? "#4f46e5");">
+                            @EditingMember.Avatar
+                        </div>
+                        <div class="flex-grow-1">
+                            <label class="form-label small fw-semibold">Avatar Emoji</label>
+                            <input type="text" class="form-control" maxlength="8"
+                                   @bind="EditingMember.Avatar" placeholder="👤" />
+                        </div>
+                        <div>
+                            <label class="form-label small fw-semibold">Colour</label>
+                            <input type="color" class="form-control form-control-color"
+                                   @bind="EditingMember.Colour" style="width:48px; height:38px;" />
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Full Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" @bind="EditingMember.Name"
+                                   placeholder="e.g. Dad, Mom, Son…" />
+                        </div>
+                        <div class="col-12 col-sm-6">
+                            <label class="form-label fw-semibold">Role</label>
+                            <select class="form-select" @bind="EditingMember.Role">
+                                <option value="Member">Member</option>
+                                <option value="Admin">Admin</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-6">
+                            <label class="form-label fw-semibold">Username</label>
+                            <input type="text" class="form-control" @bind="EditingMember.Username"
+                                   placeholder="login username" autocomplete="off" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">
+                                @(IsEditing ? "New Password" : "Password")
+                                @if (IsEditing) { <span class="text-muted fw-normal small">(leave blank to keep existing)</span> }
+                                else { <span class="text-muted fw-normal small">(leave blank — set on first login)</span> }
+                            </label>
+                            <input type="password" class="form-control" @bind="NewPassword"
+                                   placeholder="••••••••" autocomplete="new-password" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">
+                                4-Digit PIN
+                                <span class="text-muted fw-normal small">(leave blank to remove PIN)</span>
+                            </label>
+                            <input type="password" class="form-control" maxlength="4"
+                                   @bind="NewPin" placeholder="••••"
+                                   pattern="[0-9]{4}" inputmode="numeric" />
+                            <div class="form-text">PIN is required to enter this profile. Numbers only.</div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="chkDefault"
+                                       @bind="EditingMember.IsDefault" />
+                                <label class="form-check-label" for="chkDefault">Set as default profile</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(FormError))
+                    {
+                        <div class="alert alert-danger py-2 small mt-3">@FormError</div>
+                    }
+                </div>
+                <div class="modal-panel-footer">
+                    <button class="btn btn-outline-secondary" @onclick="CloseForm">Cancel</button>
+                    <button class="btn btn-primary fw-semibold px-4" @onclick="SaveProfile" disabled="@IsSaving">
+                        @if (IsSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                        }
+                        @(IsEditing ? "Save Changes" : "Create Profile")
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Delete Confirmation -->
+        @if (DeletingMember is not null)
+        {
+            <div class="modal-backdrop-custom" @onclick="CancelDelete"></div>
+            <div class="modal-panel shadow-lg animate-fade-in" style="max-width:400px;">
+                <div class="modal-panel-header">
+                    <h5 class="mb-0 fw-bold text-danger">⚠️ Remove Profile</h5>
+                    <button class="btn-close" @onclick="CancelDelete"></button>
+                </div>
+                <div class="modal-panel-body">
+                    <p>Are you sure you want to remove <strong>@DeletingMember.Name</strong>?</p>
+                    <p class="text-muted small">This will hide the profile from the app. Expenses will be preserved.</p>
+                </div>
+                <div class="modal-panel-footer">
+                    <button class="btn btn-outline-secondary" @onclick="CancelDelete">Cancel</button>
+                    <button class="btn btn-danger fw-semibold" @onclick="DoDelete" disabled="@IsSaving">
+                        @if (IsSaving) { <span class="spinner-border spinner-border-sm me-2"></span> }
+                        Yes, Remove
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .profile-manage-card {
+        background: var(--dash-surface);
+        border: 1px solid var(--dash-border);
+        border-radius: 16px;
+        padding: 1.25rem;
+        height: 100%;
+        color: var(--dash-text);
+    }
+    .profile-avatar-sm {
+        width: 52px; height: 52px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.6rem; flex-shrink: 0;
+        box-shadow: 0 4px 10px rgba(0,0,0,.15);
+    }
+    .profile-avatar-lg {
+        width: 72px; height: 72px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 2.2rem; flex-shrink: 0;
+        box-shadow: 0 4px 10px rgba(0,0,0,.15);
+    }
+    .profile-info-row {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 0.3rem 0; border-bottom: 1px solid var(--dash-border);
+        font-size: 0.85rem;
+    }
+    .profile-info-row .label { color: var(--dash-text-muted); }
+    .profile-info-row .value { font-weight: 600; color: var(--dash-text); }
+
+    /* Modal */
+    .modal-backdrop-custom {
+        position: fixed; inset: 0; background: rgba(0,0,0,.55);
+        z-index: 1040; backdrop-filter: blur(3px);
+    }
+    .modal-panel {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: var(--dash-surface);
+        border: 1px solid var(--dash-border);
+        border-radius: 20px; z-index: 1050;
+        width: 100%; max-width: 520px;
+        max-height: 90vh; overflow-y: auto;
+        display: flex; flex-direction: column;
+        box-shadow: var(--shadow-card);
+    }
+    .modal-panel-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 1.25rem 1.5rem;
+        border-bottom: 1px solid var(--dash-border);
+        color: var(--dash-text);
+    }
+    .modal-panel-body { padding: 1.5rem; flex: 1; overflow-y: auto; color: var(--dash-text); }
+    .modal-panel-footer {
+        display: flex; gap: 0.75rem; justify-content: flex-end;
+        padding: 1rem 1.5rem;
+        border-top: 1px solid var(--dash-border);
+    }
+
+    .animate-fade-in { animation: fadeIn 0.2s ease-in-out; }
+    @@keyframes fadeIn { from { opacity: 0; transform: translate(-50%,-48%); } to { opacity: 1; transform: translate(-50%,-50%); } }
+</style>
+
+@code {
+    private List<FamilyMember> Members = [];
+    private bool IsLoading = true;
+    private bool IsSaving = false;
+    private string? StatusMessage;
+    private bool StatusIsError = false;
+
+    // Form state
+    private bool ShowForm = false;
+    private bool IsEditing = false;
+    private FamilyMember EditingMember = new();
+    private string NewPassword = "";
+    private string NewPin = "";
+    private string? FormError;
+
+    // Delete state
+    private FamilyMember? DeletingMember;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMembers();
+    }
+
+    private async Task LoadMembers()
+    {
+        IsLoading = true;
+        Members = await ExpenseService.GetFamilyMembersAsync();
+        IsLoading = false;
+    }
+
+    private void ShowAddForm()
+    {
+        IsEditing = false;
+        EditingMember = new FamilyMember
+        {
+            Avatar = "👤",
+            Colour = "#4f46e5",
+            Role = "Member"
+        };
+        NewPassword = "";
+        NewPin = "";
+        FormError = null;
+        ShowForm = true;
+    }
+
+    private void ShowEditForm(FamilyMember member)
+    {
+        IsEditing = true;
+        EditingMember = new FamilyMember
+        {
+            Id = member.Id,
+            GlobalId = member.GlobalId,
+            Name = member.Name,
+            Role = member.Role,
+            Avatar = member.Avatar,
+            Colour = member.Colour,
+            Username = member.Username,
+            IsDefault = member.IsDefault,
+            PinHash = member.PinHash,
+            PasswordHash = member.PasswordHash
+        };
+        NewPassword = "";
+        NewPin = member.PinHash ?? "";
+        FormError = null;
+        ShowForm = true;
+    }
+
+    private void CloseForm()
+    {
+        ShowForm = false;
+        FormError = null;
+    }
+
+    private async Task SaveProfile()
+    {
+        FormError = null;
+
+        if (string.IsNullOrWhiteSpace(EditingMember.Name))
+        {
+            FormError = "Name is required.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(EditingMember.Avatar))
+            EditingMember.Avatar = "👤";
+
+        // Validate PIN if provided
+        if (!string.IsNullOrWhiteSpace(NewPin))
+        {
+            if (NewPin.Length != 4 || !NewPin.All(char.IsDigit))
+            {
+                FormError = "PIN must be exactly 4 digits.";
+                return;
+            }
+        }
+
+        // Set PIN
+        EditingMember.PinHash = string.IsNullOrWhiteSpace(NewPin) ? null : NewPin.Trim();
+
+        // Hash password if provided (applies to both create & edit)
+        if (!string.IsNullOrWhiteSpace(NewPassword))
+            EditingMember.PasswordHash = ExpenseService.HashPassword(NewPassword);
+
+        IsSaving = true;
+        try
+        {
+            if (IsEditing)
+            {
+                // Lowercase username
+                if (!string.IsNullOrWhiteSpace(EditingMember.Username))
+                    EditingMember.Username = EditingMember.Username.Trim().ToLower();
+
+                await ExpenseService.UpdateFamilyMemberAsync(EditingMember);
+                ShowStatus("Profile updated successfully.", false);
+            }
+            else
+            {
+                // For new member, set username lowercased
+                if (!string.IsNullOrWhiteSpace(EditingMember.Username))
+                    EditingMember.Username = EditingMember.Username.Trim().ToLower();
+
+                await ExpenseService.CreateFamilyMemberAsync(EditingMember);
+                ShowStatus("Profile created successfully.", false);
+            }
+
+            ShowForm = false;
+            await LoadMembers();
+        }
+        catch (Exception ex)
+        {
+            FormError = $"Error saving profile: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void ConfirmDelete(FamilyMember member) => DeletingMember = member;
+    private void CancelDelete() => DeletingMember = null;
+
+    private async Task DoDelete()
+    {
+        if (DeletingMember is null) return;
+        IsSaving = true;
+        try
+        {
+            await ExpenseService.DeleteFamilyMemberAsync(DeletingMember.GlobalId);
+            ShowStatus($"{DeletingMember.Name} removed.", false);
+            DeletingMember = null;
+            await LoadMembers();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void ShowStatus(string message, bool isError)
+    {
+        StatusMessage = message;
+        StatusIsError = isError;
+    }
+}

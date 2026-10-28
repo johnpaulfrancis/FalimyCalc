@@ -8,6 +8,10 @@
     <meta name="color-scheme" content="light dark" />
     <base href="/" />
     <ResourcePreloader />
+    <!-- Enterprise UI Font: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" />
     <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="stylesheet" href="@Assets["css/dashboard.css"]" />
@@ -20,7 +24,10 @@
 <body>
     <Routes @rendermode="InteractiveServer" />
     <ReconnectModal />
+    <script src="@Assets["lib/bootstrap/dist/js/bootstrap.bundle.min.js"]"></script>
     <script src="js/theme.js"></script>
+    <script src="js/download.js"></script>
+    <script src="js/session.js"></script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
 </body>
 

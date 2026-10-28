@@ -12,8 +12,8 @@ main {
 }
 
 .sidebar {
-    background: var(--sidebar-bg, #0f172a);
-    border-right: 1px solid var(--sidebar-border, rgba(255, 255, 255, 0.08));
+    background: var(--sidebar-bg, #ffffff) !important;
+    border-right: 1px solid var(--sidebar-border, rgba(148, 163, 184, 0.2)) !important;
 }
 
 .top-row {

@@ -1,0 +1,523 @@
+@page "/pending"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@using FalimyCalc.Shared.Enums
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>Pending Transactions</PageTitle>
+
+<div class="dash-header mb-4">
+    <div>
+        <h1 class="dash-title">Pending Transactions</h1>
+        <p class="dash-subtitle">Review, edit, and approve detected transactions before they become confirmed expenses</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn-primary-glow border-0" @onclick="ShowSimulateModal">
+            <span class="btn-icon">⚡</span> Simulate SMS
+        </button>
+    </div>
+</div>
+
+<!-- Tabs & Status Filter -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+    <div class="btn-group" role="group">
+        <button type="button" class="btn @(ActiveFilter == null ? "btn-primary" : "btn-outline-secondary")"
+                @onclick="() => SetFilter(null)">
+            All (@AllItems.Count)
+        </button>
+        <button type="button" class="btn @(ActiveFilter == PendingTransactionStatus.Pending ? "btn-primary" : "btn-outline-secondary")"
+                @onclick="() => SetFilter(PendingTransactionStatus.Pending)">
+            Pending
+            @if (PendingCount > 0)
+            {
+                <span class="badge bg-warning text-dark ms-1">@PendingCount</span>
+            }
+        </button>
+        <button type="button" class="btn @(ActiveFilter == PendingTransactionStatus.Approved ? "btn-primary" : "btn-outline-secondary")"
+                @onclick="() => SetFilter(PendingTransactionStatus.Approved)">
+            Approved (@ApprovedCount)
+        </button>
+        <button type="button" class="btn @(ActiveFilter == PendingTransactionStatus.Rejected ? "btn-primary" : "btn-outline-secondary")"
+                @onclick="() => SetFilter(PendingTransactionStatus.Rejected)">
+            Rejected (@RejectedCount)
+        </button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(SuccessMessage))
+    {
+        <div class="alert alert-success py-1 px-3 mb-0 small alert-dismissible fade show" role="alert">
+            @SuccessMessage
+            <button type="button" class="btn-close py-2" @onclick="() => SuccessMessage = null"></button>
+        </div>
+    }
+</div>
+
+@if (IsLoading)
+{
+    <div class="skeleton-wrapper">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+    </div>
+}
+else if (!FilteredItems.Any())
+{
+    <div class="chart-card text-center py-5">
+        <span class="fs-1 d-block mb-2">📥</span>
+        <h5 class="fw-bold">No transactions found</h5>
+        <p class="text-muted mb-3">
+            @(ActiveFilter == PendingTransactionStatus.Pending
+                ? "You have caught up on all pending transactions!"
+                : "No transactions match the selected filter.")
+        </p>
+        <button class="btn btn-primary btn-sm" @onclick="ShowSimulateModal">
+            ⚡ Simulate a Bank SMS Transaction
+        </button>
+    </div>
+}
+else
+{
+    <div class="d-flex flex-column gap-3">
+        @foreach (var item in FilteredItems)
+        {
+            var isPending = item.Status == PendingTransactionStatus.Pending;
+            var isApproved = item.Status == PendingTransactionStatus.Approved;
+            var isRejected = item.Status == PendingTransactionStatus.Rejected;
+
+            <div class="card shadow-sm border-0 position-relative" style="overflow: hidden; border-radius: 14px;">
+                <!-- Status accent line -->
+                <div style="height: 4px; background: @(isPending ? "var(--c-amber)" : isApproved ? "var(--c-emerald)" : "var(--c-rose)");"></div>
+
+                <div class="card-body p-3">
+                    <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
+                        <!-- Left Details -->
+                        <div class="d-flex align-items-start gap-3">
+                            <div class="rounded-circle d-grid place-items-center text-center p-2"
+                                 style="width: 44px; height: 44px; background: @(isPending ? "rgba(245, 158, 11, 0.15)" : isApproved ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)");">
+                                <span class="fs-5">@(isPending ? "⏳" : isApproved ? "✅" : "❌")</span>
+                            </div>
+
+                            <div>
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <h6 class="mb-0 fw-bold">@(item.DetectedMerchant ?? "Unknown Merchant")</h6>
+                                    @if (!string.IsNullOrEmpty(item.DetectedBank))
+                                    {
+                                        <span class="badge bg-secondary-subtle text-secondary small">
+                                            @item.DetectedBank @(!string.IsNullOrEmpty(item.DetectedAccount) ? $"({item.DetectedAccount})" : "")
+                                        </span>
+                                    }
+                                    <span class="badge @(isPending ? "bg-warning text-dark" : isApproved ? "bg-success text-white" : "bg-danger text-white") small">
+                                        @item.Status
+                                    </span>
+                                </div>
+
+                                <div class="small text-muted mt-1">
+                                    <span>📅 @(item.DetectedDate?.ToString("dd MMM yyyy, hh:mm tt") ?? item.CreatedAt.ToString("dd MMM yyyy, hh:mm tt"))</span>
+                                    @if (item.DetectedType.HasValue)
+                                    {
+                                        <span class="ms-2">(@item.DetectedType.Value)</span>
+                                    }
+                                </div>
+
+                                <!-- Collapsible / Expandable SMS Preview -->
+                                @if (!string.IsNullOrEmpty(item.RawSmsBody))
+                                {
+                                    <div class="mt-2 p-2 rounded small" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border); max-width: 600px;">
+                                        <span class="text-muted d-block" style="font-size: 0.75rem;">SMS Content:</span>
+                                        <span class="font-monospace" style="font-size: 0.8rem;">@item.RawSmsBody</span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Right Amount & Action Buttons -->
+                        <div class="d-flex flex-column align-items-end justify-content-between gap-2 ms-auto">
+                            <div class="fs-4 fw-bold" style="color: var(--c-rose);">
+                                ₹ @(item.DetectedAmount?.ToString("N2") ?? "0.00")
+                            </div>
+
+                            @if (isPending)
+                            {
+                                <div class="d-flex align-items-center gap-2">
+                                    <button class="btn btn-sm btn-success px-3" @onclick="() => StartApprove(item)">
+                                        ✓ Approve
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => StartEditApprove(item)" title="Edit before approving">
+                                        ✏️ Edit
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmReject(item)" title="Reject transaction">
+                                        ✕
+                                    </button>
+                                </div>
+                            }
+                            else if (isApproved)
+                            {
+                                <span class="small text-success fw-semibold">
+                                    ✓ Added to Expenses
+                                </span>
+                            }
+                            else if (isRejected)
+                            {
+                                <span class="small text-muted">
+                                    Rejected / Discarded
+                                </span>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<!-- Approve Modal -->
+@if (ApprovingItem is not null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0" style="background: var(--dash-surface); color: var(--dash-text); border-radius: 16px;">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold">Approve Expense</h5>
+                    <button type="button" class="btn-close" @onclick="CancelApprove"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">Confirm or adjust details before adding this transaction to your verified expenses.</p>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Description / Merchant <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="ApproveDescription" placeholder="Description" />
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Amount (₹) <span class="text-danger">*</span></label>
+                            <input type="number" step="0.01" class="form-control" @bind="ApproveAmount" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Date</label>
+                            <input type="date" class="form-control" @bind="ApproveDate" />
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Category <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="ApproveCategoryId">
+                            <option value="">-- Select Category --</option>
+                            @foreach (var cat in Categories)
+                            {
+                                <option value="@cat.GlobalId">@cat.Icon @cat.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(ApproveError))
+                    {
+                        <div class="alert alert-danger py-1 small">@ApproveError</div>
+                    }
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button class="btn btn-outline-secondary" @onclick="CancelApprove">Cancel</button>
+                    <button class="btn btn-success" @onclick="SaveApproval" disabled="@IsProcessing">
+                        @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Confirm & Save Expense
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Simulate SMS Modal -->
+@if (ShowSimulate)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0" style="background: var(--dash-surface); color: var(--dash-text); border-radius: 16px;">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold">⚡ Simulate Bank SMS</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowSimulate = false"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">Test transaction detection and review workflow by simulating an SMS from your bank.</p>
+
+                    <!-- Presets -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Quick Presets</label>
+                        <div class="d-flex flex-wrap gap-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ApplyPreset(1)">🍔 Swiggy ₹480</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ApplyPreset(2)">📦 Amazon ₹1,850</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ApplyPreset(3)">⛽ Petrol ₹2,200</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ApplyPreset(4)">💡 Electricity ₹1,450</button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Raw SMS Text</label>
+                        <textarea class="form-control font-monospace" rows="2" @bind="SimRawSms"></textarea>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Merchant</label>
+                            <input class="form-control" @bind="SimMerchant" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Amount (₹)</label>
+                            <input type="number" step="0.01" class="form-control" @bind="SimAmount" />
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Bank Name</label>
+                            <input class="form-control" @bind="SimBank" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Account / Card</label>
+                            <input class="form-control" @bind="SimAccount" />
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button class="btn btn-outline-secondary" @onclick="() => ShowSimulate = false">Cancel</button>
+                    <button class="btn btn-primary" @onclick="CreateSimulatedTransaction" disabled="@IsProcessing">
+                        @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Add to Pending
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<PendingTransaction> AllItems = [];
+    private List<Category> Categories = [];
+    private PendingTransactionStatus? ActiveFilter = PendingTransactionStatus.Pending;
+    private bool IsLoading = true;
+    private bool IsProcessing = false;
+    private string? SuccessMessage;
+
+    private int PendingCount => AllItems.Count(x => x.Status == PendingTransactionStatus.Pending);
+    private int ApprovedCount => AllItems.Count(x => x.Status == PendingTransactionStatus.Approved);
+    private int RejectedCount => AllItems.Count(x => x.Status == PendingTransactionStatus.Rejected);
+
+    private IEnumerable<PendingTransaction> FilteredItems => ActiveFilter.HasValue
+        ? AllItems.Where(x => x.Status == ActiveFilter.Value)
+        : AllItems;
+
+    // Approve Modal state
+    private PendingTransaction? ApprovingItem;
+    private string ApproveDescription = string.Empty;
+    private decimal ApproveAmount = 0;
+    private DateTime ApproveDate = DateTime.Today;
+    private Guid? ApproveCategoryId;
+    private string? ApproveError;
+
+    // Simulate Modal state
+    private bool ShowSimulate = false;
+    private string SimRawSms = string.Empty;
+    private string SimMerchant = string.Empty;
+    private decimal SimAmount = 0;
+    private string SimBank = "HDFC Bank";
+    private string SimAccount = "XX4012";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        IsLoading = true;
+        AllItems = await ExpenseService.GetPendingTransactionsAsync();
+        Categories = await ExpenseService.GetCategoriesAsync();
+        IsLoading = false;
+    }
+
+    private void SetFilter(PendingTransactionStatus? status)
+    {
+        ActiveFilter = status;
+    }
+
+    private void StartApprove(PendingTransaction item)
+    {
+        ApprovingItem = item;
+        ApproveDescription = item.DetectedMerchant ?? "Expense";
+        ApproveAmount = item.DetectedAmount ?? 0;
+        ApproveDate = item.DetectedDate?.Date ?? DateTime.Today;
+
+        // Auto-match category by keyword
+        ApproveCategoryId = AutoMatchCategory(ApproveDescription);
+        ApproveError = null;
+    }
+
+    private void StartEditApprove(PendingTransaction item)
+    {
+        StartApprove(item);
+    }
+
+    private Guid? AutoMatchCategory(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var lower = text.ToLowerInvariant();
+
+        foreach (var cat in Categories)
+        {
+            var catLower = cat.Name.ToLowerInvariant();
+            if (lower.Contains(catLower) || catLower.Contains(lower))
+                return cat.GlobalId;
+        }
+
+        // Common defaults
+        if (lower.Contains("swiggy") || lower.Contains("zomato") || lower.Contains("restaurant") || lower.Contains("cafe") || lower.Contains("food"))
+            return Categories.FirstOrDefault(c => c.Name.Contains("Food", StringComparison.OrdinalIgnoreCase))?.GlobalId;
+        if (lower.Contains("amazon") || lower.Contains("flipkart") || lower.Contains("myntra") || lower.Contains("shopping"))
+            return Categories.FirstOrDefault(c => c.Name.Contains("Shopping", StringComparison.OrdinalIgnoreCase))?.GlobalId;
+        if (lower.Contains("uber") || lower.Contains("ola") || lower.Contains("petrol") || lower.Contains("fuel"))
+            return Categories.FirstOrDefault(c => c.Name.Contains("Transport", StringComparison.OrdinalIgnoreCase))?.GlobalId;
+        if (lower.Contains("bescom") || lower.Contains("electricity") || lower.Contains("bill") || lower.Contains("wifi") || lower.Contains("broadband"))
+            return Categories.FirstOrDefault(c => c.Name.Contains("Utilities", StringComparison.OrdinalIgnoreCase))?.GlobalId;
+
+        return Categories.FirstOrDefault()?.GlobalId;
+    }
+
+    private void CancelApprove()
+    {
+        ApprovingItem = null;
+        ApproveError = null;
+    }
+
+    private async Task SaveApproval()
+    {
+        if (ApprovingItem is null) return;
+
+        if (string.IsNullOrWhiteSpace(ApproveDescription))
+        {
+            ApproveError = "Description is required.";
+            return;
+        }
+
+        if (ApproveAmount <= 0)
+        {
+            ApproveError = "Amount must be greater than zero.";
+            return;
+        }
+
+        IsProcessing = true;
+        try
+        {
+            await ExpenseService.ApprovePendingTransactionAsync(
+                ApprovingItem.GlobalId,
+                ApproveCategoryId,
+                ApproveAmount,
+                ApproveDescription.Trim(),
+                ApproveDate,
+                Session.CurrentUser?.GlobalId
+            );
+
+            SuccessMessage = $"Approved \"{ApproveDescription}\" as an expense!";
+            ApprovingItem = null;
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            ApproveError = $"Failed to approve: {ex.Message}";
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task ConfirmReject(PendingTransaction item)
+    {
+        IsProcessing = true;
+        try
+        {
+            await ExpenseService.RejectPendingTransactionAsync(item.GlobalId);
+            SuccessMessage = $"Rejected transaction \"{item.DetectedMerchant ?? "Transaction"}\".";
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            SuccessMessage = $"Failed to reject: {ex.Message}";
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private void ShowSimulateModal()
+    {
+        ApplyPreset(1);
+        ShowSimulate = true;
+    }
+
+    private void ApplyPreset(int id)
+    {
+        switch (id)
+        {
+            case 1:
+                SimMerchant = "Swiggy";
+                SimAmount = 480.00m;
+                SimBank = "HDFC Bank";
+                SimAccount = "XX4012";
+                SimRawSms = "Rs 480.00 debited from HDFC Bank A/c XX4012 on 17-Oct-26 towards SWIGGY. Info: UPI/429182.";
+                break;
+            case 2:
+                SimMerchant = "Amazon India";
+                SimAmount = 1850.00m;
+                SimBank = "SBI";
+                SimAccount = "XX9104";
+                SimRawSms = "Dear Customer, INR 1850.00 debited from A/c XX9104 on 17-Oct-26 at AMAZON. Avl Bal: Rs 42,100.";
+                break;
+            case 3:
+                SimMerchant = "Indian Oil Petrol";
+                SimAmount = 2200.00m;
+                SimBank = "ICICI Bank";
+                SimAccount = "XX5531";
+                SimRawSms = "Your ICICI Card XX5531 was charged Rs 2200.00 at IOCL PUMP BANGALORE on 17-Oct-26.";
+                break;
+            case 4:
+                SimMerchant = "BESCOM Electricity";
+                SimAmount = 1450.00m;
+                SimBank = "HDFC Bank";
+                SimAccount = "XX4012";
+                SimRawSms = "Rs 1450.00 debited from HDFC Bank A/c XX4012 towards BESCOM BILL PAYMENT.";
+                break;
+        }
+    }
+
+    private async Task CreateSimulatedTransaction()
+    {
+        if (SimAmount <= 0) return;
+
+        IsProcessing = true;
+        try
+        {
+            await ExpenseService.SimulateSmsTransactionAsync(
+                SimRawSms,
+                SimAmount,
+                SimMerchant,
+                SimBank,
+                SimAccount,
+                DateTime.Now
+            );
+
+            ShowSimulate = false;
+            SuccessMessage = "Simulated transaction created and added to Pending!";
+            ActiveFilter = PendingTransactionStatus.Pending;
+            await LoadData();
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+}

@@ -1,0 +1,83 @@
+@inherits LayoutComponentBase
+
+<!-- Full-screen branded layout for the login page — no sidebar, no top bar -->
+<div class="auth-bg">
+    <div class="auth-glow auth-glow--1"></div>
+    <div class="auth-glow auth-glow--2"></div>
+
+    <div class="auth-content">
+        @Body
+    </div>
+
+    <footer class="auth-footer">
+        FalimyCalc &mdash; Smart Family Expense Tracker
+    </footer>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+<style>
+    /* Reset any body padding that MainLayout might add */
+    body { overflow-x: hidden; }
+
+    .auth-bg {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: var(--dash-bg);
+        padding: 1.5rem 1rem 4rem;
+        position: relative;
+        overflow: hidden;
+    }
+
+    /* Ambient glow blobs */
+    .auth-glow {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(80px);
+        opacity: var(--glow-opacity, 0.15);
+        pointer-events: none;
+        animation: floatGlow 8s ease-in-out infinite alternate;
+    }
+    .auth-glow--1 {
+        width: 500px; height: 500px;
+        background: radial-gradient(circle, var(--c-indigo), transparent 70%);
+        top: -120px; left: -120px;
+        animation-delay: 0s;
+    }
+    .auth-glow--2 {
+        width: 400px; height: 400px;
+        background: radial-gradient(circle, var(--c-violet), transparent 70%);
+        bottom: -100px; right: -100px;
+        animation-delay: -4s;
+    }
+    @@keyframes floatGlow {
+        from { transform: translate(0, 0) scale(1); }
+        to   { transform: translate(30px, 20px) scale(1.1); }
+    }
+
+    .auth-content {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        display: flex;
+        justify-content: center;
+    }
+
+    .auth-footer {
+        position: fixed;
+        bottom: 1rem;
+        left: 0; right: 0;
+        text-align: center;
+        font-size: 0.75rem;
+        color: var(--dash-text-muted);
+        opacity: 0.6;
+        z-index: 1;
+    }
+</style>

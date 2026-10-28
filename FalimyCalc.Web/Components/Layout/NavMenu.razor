@@ -1,3 +1,11 @@
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
+
 <div class="top-row px-3">
     <div class="container-fluid px-0">
         <a class="navbar-brand" href="">FalimyCalc</a>
@@ -6,8 +14,8 @@
 
 <input type="checkbox" title="Navigation menu" class="navbar-toggler" />
 
-<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
-    <nav class="nav flex-column">
+<div class="nav-scrollable d-flex flex-column" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column flex-grow-1">
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
@@ -17,6 +25,42 @@
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="expenses">
                 <span class="bi bi-cash-stack" aria-hidden="true"></span> Expenses
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="accounts">
+                <span class="bi bi-wallet2" aria-hidden="true"></span> Accounts
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="goals">
+                <span class="bi bi-bullseye" aria-hidden="true"></span> Goals
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="subscriptions">
+                <span class="bi bi-arrow-repeat" aria-hidden="true"></span> Subscriptions
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="loans">
+                <span class="bi bi-credit-card-2-front" aria-hidden="true"></span> Loans & EMI
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link d-flex align-items-center justify-content-between" href="pending">
+                <div class="d-flex align-items-center">
+                    <span class="bi bi-inbox-fill" aria-hidden="true"></span> Pending
+                </div>
+                @if (PendingCount > 0)
+                {
+                    <span class="badge bg-warning text-dark rounded-pill px-2" style="font-size: 0.7rem;">@PendingCount</span>
+                }
             </NavLink>
         </div>
 
@@ -31,6 +75,84 @@
                 <span class="bi bi-bar-chart-line-fill" aria-hidden="true"></span> Reports
             </NavLink>
         </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link d-flex align-items-center justify-content-between" href="ai-advisor">
+                <div class="d-flex align-items-center">
+                    <span class="bi bi-stars" aria-hidden="true"></span> AI Advisor
+                </div>
+                <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary border border-primary-subtle px-2" style="font-size: 0.65rem;">AI</span>
+            </NavLink>
+        </div>
+
+        @if (Session.CurrentUser?.Role == "Admin")
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="profiles">
+                    <span class="bi bi-people-fill" aria-hidden="true"></span> Profiles
+                </NavLink>
+            </div>
+        }
     </nav>
+
+    @if (Session.IsAuthenticated && Session.CurrentUser is not null)
+    {
+        <div class="mt-auto pt-3 pb-3 px-3 border-top" style="border-color: var(--sidebar-border, rgba(148, 163, 184, 0.2)) !important;">
+            <div class="d-flex align-items-center gap-2 p-2 rounded-3 mb-2" style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2);">
+                <div style="font-size: 1.3rem; width: 34px; height: 34px; border-radius: 50%; background: @(Session.CurrentUser.Colour ?? "#6366f1"); display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    @Session.CurrentUser.Avatar
+                </div>
+                <div class="overflow-hidden flex-grow-1">
+                    <div class="fw-bold text-truncate" style="font-size: 0.85rem; color: var(--sidebar-text-hover, #0f172a);">@Session.CurrentUser.Name</div>
+                    <div class="text-muted text-truncate" style="font-size: 0.7rem;">@Session.CurrentUser.Role</div>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="/login?switch=1" class="btn btn-sm btn-outline-primary w-50 py-1 rounded-pill fw-semibold" style="font-size: 0.75rem;" title="Switch Profile">
+                    🔄 Switch
+                </a>
+                <button type="button" class="btn btn-sm btn-outline-danger w-50 py-1 rounded-pill fw-semibold" style="font-size: 0.75rem;" @onclick="Logout" title="Sign Out">
+                    🚪 Logout
+                </button>
+            </div>
+        </div>
+    }
 </div>
 
+@code {
+    private int PendingCount = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.OnSessionChanged += HandleSessionChanged;
+        try
+        {
+            PendingCount = await ExpenseService.GetPendingCountAsync();
+        }
+        catch
+        {
+            // Ignore if db is starting up
+        }
+    }
+
+    private void HandleSessionChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task Logout()
+    {
+        Session.Logout();
+        try
+        {
+            await JS.InvokeVoidAsync("falimyAuth.clearSession");
+        }
+        catch { }
+        Nav.NavigateTo("/login", forceLoad: true);
+    }
+
+    public void Dispose()
+    {
+        Session.OnSessionChanged -= HandleSessionChanged;
+    }
+}

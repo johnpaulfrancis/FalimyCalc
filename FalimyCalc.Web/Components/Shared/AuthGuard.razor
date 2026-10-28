@@ -1,0 +1,115 @@
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject UserSessionService Session
+@inject ExpenseService ExpenseService
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@implements IDisposable
+
+@* Pass-through for public pages (e.g. Login) or authenticated sessions *@
+@if (IsPublicPage || Session.IsAuthenticated)
+{
+    @ChildContent
+}
+else if (_isChecking)
+{
+    <div class="d-flex align-items-center justify-content-center p-5" style="min-height: 50vh;">
+        <div class="spinner-border text-primary" role="status"></div>
+    </div>
+}
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>The current route's page type, used to determine if auth is required.</summary>
+    [Parameter] public Type? PageType { get; set; }
+
+    // Pages accessible without login
+    private static readonly HashSet<Type> PublicPages =
+    [
+        typeof(Pages.Login)
+    ];
+
+    private bool IsPublicPage => PageType is not null && PublicPages.Contains(PageType);
+    private bool _isChecking = false;
+
+    protected override void OnInitialized()
+    {
+        Session.OnSessionChanged += HandleSessionChanged;
+        if (!IsPublicPage && !Session.IsAuthenticated)
+        {
+            _isChecking = true;
+        }
+        else
+        {
+            GuardRoute();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _isChecking && !Session.IsAuthenticated && !IsPublicPage)
+        {
+            try
+            {
+                var storedUserId = await JS.InvokeAsync<string?>("falimyAuth.getSession");
+                if (!string.IsNullOrWhiteSpace(storedUserId) && Guid.TryParse(storedUserId, out var g))
+                {
+                    var member = await ExpenseService.GetFamilyMemberAsync(g);
+                    if (member != null)
+                    {
+                        Session.Login(member);
+                        _isChecking = false;
+                        StateHasChanged();
+                        return;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignored - fallback to redirect
+            }
+
+            _isChecking = false;
+            GuardRoute();
+            StateHasChanged();
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!_isChecking)
+        {
+            GuardRoute();
+        }
+    }
+
+    private void HandleSessionChanged()
+    {
+        InvokeAsync(() =>
+        {
+            if (!_isChecking)
+            {
+                GuardRoute();
+            }
+            StateHasChanged();
+        });
+    }
+
+    private void GuardRoute()
+    {
+        if (IsPublicPage || Session.IsAuthenticated) return;
+
+        var current = Nav.ToBaseRelativePath(Nav.Uri);
+        // Avoid redirect loop if already navigating to login
+        if (current.StartsWith("login", StringComparison.OrdinalIgnoreCase)) return;
+
+        var returnUrl = Uri.EscapeDataString("/" + current.TrimStart('/'));
+        Nav.NavigateTo($"/login?returnUrl={returnUrl}", forceLoad: false);
+    }
+
+    public void Dispose()
+    {
+        Session.OnSessionChanged -= HandleSessionChanged;
+    }
+}

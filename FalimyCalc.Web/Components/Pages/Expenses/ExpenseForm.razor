@@ -3,87 +3,1106 @@
 @rendermode InteractiveServer
 @using FalimyCalc.Data.Entities
 @using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
 @inject ExpenseService ExpenseService
+@inject UserSessionService Session
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
-<PageTitle>@(IsEditMode ? "Edit Expense" : "Add Expense")</PageTitle>
+<PageTitle>@(IsEditMode ? "Edit Transaction" : (SelectedType == "income" ? "Add Income" : SelectedType == "transfer" ? "Transfer Funds" : "Add Expense")) — FalimyCalc</PageTitle>
 
-<div class="d-flex align-items-center mb-3">
-    <a href="/expenses" class="btn btn-outline-secondary me-3">← Back</a>
-    <h1 class="mb-0">@(IsEditMode ? "Edit Expense" : "Add Expense")</h1>
+<div class="container-fluid px-0" style="max-width: 1100px;">
+    <!-- ── Header ─────────────────────────────────────────────────────────── -->
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+        <div class="d-flex align-items-center gap-3">
+            <a href="/expenses" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1">
+                <span>←</span> <span>Back</span>
+            </a>
+            <div>
+                <h1 class="dash-title mb-0" style="font-size: 1.5rem;">
+                    @if (IsEditMode)
+                    {
+                        <span>✏️ Edit @(SelectedType == "income" ? "Income" : SelectedType == "transfer" ? "Transfer" : "Expense")</span>
+                    }
+                    else if (SelectedType == "income")
+                    {
+                        <span>📈 Add New Income</span>
+                    }
+                    else if (SelectedType == "transfer")
+                    {
+                        <span>🔁 Transfer Funds Between Accounts</span>
+                    }
+                    else
+                    {
+                        <span>✨ Add New Expense</span>
+                    }
+                </h1>
+                <p class="dash-subtitle mb-0 small text-muted">
+                    @if (SelectedType == "income")
+                    {
+                        <span>Record salary, freelance earnings, dividends, or deposits into your bank accounts</span>
+                    }
+                    else if (SelectedType == "transfer")
+                    {
+                        <span>Move money between bank accounts within the same profile with zero net balance change</span>
+                    }
+                    else
+                    {
+                        <span>Quickly log a family or personal expense from your bank accounts</span>
+                    }
+                </p>
+            </div>
+        </div>
+
+        @if (SuccessAlert)
+        {
+            <div class="alert alert-success py-1 px-3 mb-0 small animate-in d-flex align-items-center gap-2">
+                <span>✅ @SuccessMessage</span>
+            </div>
+        }
+    </div>
+
+    <!-- ── Transaction Type Switcher Tabs (Hidden during Edit Mode) ────────── -->
+    @if (!IsEditMode)
+    {
+        <div class="row g-2 mb-4">
+            <div class="col-4">
+                <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "expense" ? "active-expense" : "")"
+                        @onclick='() => SetTransactionType("expense")'>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fs-4">💸</span>
+                        <div>
+                            <div class="fw-bold small">Expense</div>
+                            <div class="text-muted type-tab-sub">Money going out</div>
+                        </div>
+                    </div>
+                </button>
+            </div>
+            <div class="col-4">
+                <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "income" ? "active-income" : "")"
+                        @onclick='() => SetTransactionType("income")'>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fs-4">📈</span>
+                        <div>
+                            <div class="fw-bold small">Income</div>
+                            <div class="text-muted type-tab-sub">Money coming in</div>
+                        </div>
+                    </div>
+                </button>
+            </div>
+            <div class="col-4">
+                <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "transfer" ? "active-transfer" : "")"
+                        @onclick='() => SetTransactionType("transfer")'>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fs-4">🔁</span>
+                        <div>
+                            <div class="fw-bold small">Transfer</div>
+                            <div class="text-muted type-tab-sub">Between accounts</div>
+                        </div>
+                    </div>
+                </button>
+            </div>
+        </div>
+    }
+
+    @if (IsLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="text-muted mt-2">Loading transaction details...</p>
+        </div>
+    }
+    else if (SelectedType == "transfer")
+    {
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!-- ── TRANSFER FORM VIEW ───────────────────────────────────────────── -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <div class="row g-4">
+            <div class="col-lg-7">
+                <div class="card border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                    <div class="card-body p-4">
+                        @if (!string.IsNullOrEmpty(ErrorMessage))
+                        {
+                            <div class="alert alert-danger py-2 px-3 small mb-3">
+                                @ErrorMessage
+                            </div>
+                        }
+
+                        <!-- 1. Profile Selector (Admin only) -->
+                        @if (Session.CurrentUser?.Role == "Admin")
+                        {
+                            <div class="mb-4">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-2">1. Profile / Account Owner</label>
+                                <div class="d-flex flex-wrap gap-2">
+                                    @foreach (var member in FamilyMembers)
+                                    {
+                                        var isSelected = SelectedMemberId == member.GlobalId.ToString();
+                                        <button type="button"
+                                                class="btn member-select-chip @(isSelected ? "selected" : "")"
+                                                style="border-color: @(isSelected ? member.Colour ?? "var(--c-indigo)" : "var(--dash-border)");"
+                                                @onclick="() => OnMemberChanged(member.GlobalId.ToString())">
+                                            <span class="fs-5">@member.Avatar</span>
+                                            <span class="fw-semibold small">@member.Name</span>
+                                            @if (isSelected)
+                                            {
+                                                <span class="badge rounded-pill bg-primary ms-1" style="font-size: 0.65rem;">Selected</span>
+                                            }
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mb-3 d-flex align-items-center gap-2 p-2 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                                <span class="fs-5">@Session.CurrentUser?.Avatar</span>
+                                <span class="small text-muted">Transferring between accounts of:</span>
+                                <strong style="color: var(--dash-text);">@Session.CurrentUser?.Name</strong>
+                            </div>
+                        }
+
+                        <!-- Check if member has at least 2 bank accounts -->
+                        @if (AvailableBankAccountsList.Count < 2)
+                        {
+                            <div class="alert alert-warning p-3 small mb-4">
+                                <div class="fw-bold mb-1">⚠️ Need at least 2 bank accounts for transfers</div>
+                                <p class="mb-2">This profile has @AvailableBankAccountsList.Count bank account(s). An internal transfer moves funds from one account to another under the same profile.</p>
+                                <a href="/accounts" class="btn btn-sm btn-primary">➕ Create Another Bank Account</a>
+                            </div>
+                        }
+
+                        <!-- 2. Transfer Amount Input -->
+                        <div class="mb-4">
+                            <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                2. Transfer Amount <span class="text-danger">*</span>
+                            </label>
+                            <div class="amount-input-wrap mb-2">
+                                <span class="amount-currency">₹</span>
+                                <input type="number"
+                                       step="0.01"
+                                       min="0"
+                                       class="form-control amount-input amount-input--transfer"
+                                       placeholder="0.00"
+                                       @bind="TransferAmount"
+                                       @bind:event="oninput"
+                                       autofocus />
+                            </div>
+
+                            <!-- Quick Increment Chips -->
+                            <div class="d-flex flex-wrap gap-1 align-items-center">
+                                <span class="small text-muted me-1">Quick Add:</span>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => TransferAmount += 500">+₹500</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => TransferAmount += 1000">+₹1,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => TransferAmount += 2000">+₹2,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => TransferAmount += 5000">+₹5,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => TransferAmount += 10000">+₹10,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 text-danger quick-chip" @onclick="() => TransferAmount = 0">Clear</button>
+                            </div>
+                        </div>
+
+                        <!-- 3. Source & Destination Accounts -->
+                        <div class="row g-3 mb-4">
+                            <!-- Source Account (From) -->
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    3. Transfer FROM (Source) <span class="text-danger">*</span>
+                                </label>
+                                <select class="form-select mb-2" @bind="TransferSourceAccountString" @bind:after="OnTransferSourceChanged">
+                                    <option value="">— Select Source Account —</option>
+                                    @foreach (var acc in AvailableBankAccountsList)
+                                    {
+                                        var bal = GetAccountBalance(acc.GlobalId);
+                                        <option value="@acc.GlobalId">
+                                            @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                        </option>
+                                    }
+                                </select>
+                                <span class="small text-muted d-block" style="font-size: 0.75rem;">Account to deduct funds from</span>
+                            </div>
+
+                            <!-- Destination Account (To) -->
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    4. Transfer TO (Destination) <span class="text-danger">*</span>
+                                </label>
+                                <select class="form-select mb-2" @bind="TransferDestAccountString">
+                                    <option value="">— Select Destination Account —</option>
+                                    @foreach (var acc in AvailableBankAccountsList.Where(a => a.GlobalId != TransferSourceAccountId))
+                                    {
+                                        var bal = GetAccountBalance(acc.GlobalId);
+                                        <option value="@acc.GlobalId">
+                                            @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                        </option>
+                                    }
+                                </select>
+                                <span class="small text-muted d-block" style="font-size: 0.75rem;">Account to receive funds</span>
+                            </div>
+                        </div>
+
+                        <!-- 5. Date & 6. Purpose -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-5">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    5. Transfer Date <span class="text-danger">*</span>
+                                </label>
+                                <input type="date" class="form-control mb-1" @bind="TransferDate" />
+                                <div class="d-flex gap-1">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(TransferDate.Date == DateTime.Today ? "active" : "")"
+                                            @onclick="() => TransferDate = DateTime.Today">Today</button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(TransferDate.Date == DateTime.Today.AddDays(-1) ? "active" : "")"
+                                            @onclick="() => TransferDate = DateTime.Today.AddDays(-1)">Yesterday</button>
+                                </div>
+                            </div>
+
+                            <div class="col-md-7">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    6. Purpose / Description
+                                </label>
+                                <input type="text"
+                                       class="form-control"
+                                       @bind="TransferDescription"
+                                       placeholder="e.g. ATM Withdrawal, Credit Card Bill, Savings"
+                                       maxlength="200" />
+                                <div class="d-flex flex-wrap gap-1 mt-1">
+                                    @foreach (var sug in TransferSuggestions)
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 suggestion-chip"
+                                                @onclick="() => TransferDescription = sug">
+                                            @sug
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 7. Optional Notes -->
+                        <div class="mb-4">
+                            <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                7. Optional Notes
+                            </label>
+                            <input type="text" class="form-control form-control-sm" placeholder="Any reference number or memo..." @bind="TransferNote" />
+                        </div>
+
+                        <!-- Submit Buttons -->
+                        <div class="d-flex gap-2 flex-wrap align-items-center pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                            <button type="button" class="btn btn-primary px-4 py-2 fw-semibold" @onclick="HandleTransferSubmit" disabled="@(IsSaving || AvailableBankAccountsList.Count < 2)">
+                                @if (IsSaving)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                    <span>Transferring...</span>
+                                }
+                                else
+                                {
+                                    <span>✓ Complete Transfer</span>
+                                }
+                            </button>
+                            <a href="/expenses" class="btn btn-outline-secondary px-3 py-2">Cancel</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transfer Visual Preview -->
+            <div class="col-lg-5">
+                <div class="sticky-top" style="top: 1.5rem;">
+                    <div class="card border-0 shadow-sm mb-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                        <div class="card-header bg-transparent py-3 border-bottom d-flex align-items-center justify-content-between" style="border-color: var(--dash-border) !important;">
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="fs-5">🔁</span>
+                                <h6 class="mb-0 fw-bold" style="color: var(--dash-text);">Live Transfer Flow</h6>
+                            </div>
+                            <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary small">Internal Movement</span>
+                        </div>
+                        <div class="card-body p-4">
+                            <!-- Visual Flow Card -->
+                            <div class="p-3 mb-3 rounded-3 text-center" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                                <span class="text-muted small text-uppercase fw-semibold d-block mb-1">Amount to Transfer</span>
+                                <h2 class="fw-bold mb-0 text-primary" style="font-variant-numeric: tabular-nums;">
+                                    ₹ @(TransferAmount > 0 ? TransferAmount.ToString("N2") : "0.00")
+                                </h2>
+                            </div>
+
+                            <!-- Source and Destination Visual Nodes -->
+                            <div class="d-flex flex-column gap-3">
+                                <!-- Source Node -->
+                                <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border-left: 4px solid var(--c-rose, #f43f5e);">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="small fw-semibold text-danger">🔻 FROM (Deducted)</span>
+                                        @if (TransferSourceAccount != null)
+                                        {
+                                            <span class="badge bg-danger-subtle text-danger small">-₹@TransferAmount.ToString("N2")</span>
+                                        }
+                                    </div>
+                                    <strong class="d-block fs-6" style="color: var(--dash-text);">
+                                        @(TransferSourceAccount != null ? $"{TransferSourceAccount.Icon} {TransferSourceAccount.AccountName}" : "Select Source Account")
+                                    </strong>
+                                    @if (TransferSourceAccount != null)
+                                    {
+                                        var currBal = GetAccountBalance(TransferSourceAccount.GlobalId);
+                                        var nextBal = currBal - TransferAmount;
+                                        <div class="d-flex justify-content-between small text-muted mt-2 pt-1 border-top" style="font-size: 0.75rem;">
+                                            <span>Current: ₹@currBal.ToString("N2")</span>
+                                            <span>After: <strong class="@(nextBal < 0 ? "text-danger" : "text-dark")">₹@nextBal.ToString("N2")</strong></span>
+                                        </div>
+                                    }
+                                </div>
+
+                                <!-- Arrow Down -->
+                                <div class="text-center text-muted fs-4">⬇️</div>
+
+                                <!-- Destination Node -->
+                                <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border-left: 4px solid var(--c-emerald, #10b981);">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="small fw-semibold text-success">🔺 TO (Credited)</span>
+                                        @if (TransferDestAccount != null)
+                                        {
+                                            <span class="badge bg-success-subtle text-success small">+₹@TransferAmount.ToString("N2")</span>
+                                        }
+                                    </div>
+                                    <strong class="d-block fs-6" style="color: var(--dash-text);">
+                                        @(TransferDestAccount != null ? $"{TransferDestAccount.Icon} {TransferDestAccount.AccountName}" : "Select Destination Account")
+                                    </strong>
+                                    @if (TransferDestAccount != null)
+                                    {
+                                        var currBal = GetAccountBalance(TransferDestAccount.GlobalId);
+                                        var nextBal = currBal + TransferAmount;
+                                        <div class="d-flex justify-content-between small text-muted mt-2 pt-1 border-top" style="font-size: 0.75rem;">
+                                            <span>Current: ₹@currBal.ToString("N2")</span>
+                                            <span>After: <strong class="text-success">₹@nextBal.ToString("N2")</strong></span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+
+                            <!-- Zero Net Impact Note -->
+                            <div class="alert alert-info py-2 px-3 small mt-3 mb-0" style="font-size: 0.78rem;">
+                                ℹ️ <strong>Zero Impact:</strong> Moving money between your bank accounts does not increase or decrease your total net family balance or count towards monthly spend.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!-- ── EXPENSE / INCOME FORM VIEW ───────────────────────────────────── -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <div class="row g-4">
+            <!-- ── Left Column: Form Fields ────────────────────────────────────── -->
+            <div class="col-lg-7">
+                <div class="card border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                    <div class="card-body p-4">
+                        <EditForm Model="Model" OnValidSubmit="HandleSubmit">
+                            <DataAnnotationsValidator />
+
+                            @if (!string.IsNullOrEmpty(ErrorMessage))
+                            {
+                                <div class="alert alert-danger py-2 px-3 small mb-3">
+                                    @ErrorMessage
+                                </div>
+                            }
+
+                            <!-- 1. Profile / Added For Selector -->
+                            @if (Session.CurrentUser?.Role == "Admin")
+                            {
+                                <div class="mb-4">
+                                    <label class="form-label fw-semibold small text-muted text-uppercase mb-2">
+                                        1. Who @(SelectedType == "income" ? "received this?" : "spent this?")
+                                    </label>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        @foreach (var member in FamilyMembers)
+                                        {
+                                            var isSelected = SelectedMemberId == member.GlobalId.ToString();
+                                            <button type="button"
+                                                    class="btn member-select-chip @(isSelected ? "selected" : "")"
+                                                    style="border-color: @(isSelected ? member.Colour ?? "var(--c-indigo)" : "var(--dash-border)");"
+                                                    @onclick="() => OnMemberChanged(member.GlobalId.ToString())">
+                                                <span class="fs-5">@member.Avatar</span>
+                                                <span class="fw-semibold small">@member.Name</span>
+                                                @if (isSelected)
+                                                {
+                                                    <span class="badge rounded-pill bg-primary ms-1" style="font-size: 0.65rem;">Selected</span>
+                                                }
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="mb-3 d-flex align-items-center gap-2 p-2 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                                    <span class="fs-5">@Session.CurrentUser?.Avatar</span>
+                                    <span class="small text-muted">@(SelectedType == "income" ? "Adding income for:" : "Adding expense for:")</span>
+                                    <strong style="color: var(--dash-text);">@Session.CurrentUser?.Name</strong>
+                                </div>
+                            }
+
+                            <!-- 2. Amount Input (Hero Field) -->
+                            <div class="mb-4">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    2. Amount @(SelectedType == "income" ? "Received" : "Spent") <span class="text-danger">*</span>
+                                </label>
+                                <div class="amount-input-wrap mb-2">
+                                    <span class="amount-currency">₹</span>
+                                    <input type="number"
+                                           step="0.01"
+                                           min="0"
+                                           class="form-control amount-input @(SelectedType == "income" ? "amount-input--income" : "")"
+                                           placeholder="0.00"
+                                           @bind="Model.Amount"
+                                           @bind:event="oninput"
+                                           autofocus />
+                                </div>
+
+                                <!-- Quick Amount Increment Chips -->
+                                <div class="d-flex flex-wrap gap-1 align-items-center">
+                                    <span class="small text-muted me-1">Quick Add:</span>
+                                    @if (SelectedType == "income")
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(500)">+₹500</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(1000)">+₹1,000</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(5000)">+₹5,000</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(10000)">+₹10,000</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(25000)">+₹25,000</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(50000)">+₹50,000</button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(100)">+₹100</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(500)">+₹500</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(1000)">+₹1,000</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(2000)">+₹2,000</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddAmount(5000)">+₹5,000</button>
+                                    }
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 text-danger quick-chip" @onclick="() => Model.Amount = 0">Clear</button>
+                                </div>
+                            </div>
+
+                            <!-- 3. Description Field -->
+                            <div class="mb-4">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    3. @(SelectedType == "income" ? "Income Source / Description" : "What was this for?") <span class="text-danger">*</span>
+                                </label>
+                                <input type="text"
+                                       class="form-control form-control-lg fs-6"
+                                       @bind="Model.Description"
+                                       placeholder="@(SelectedType == "income" ? "e.g. Monthly Salary, Freelance Payment, Dividend, Gift" : "e.g. Supermarket Groceries, Petrol, Electricity Bill")"
+                                       maxlength="500" />
+
+                                <!-- Common Description Suggestions -->
+                                <div class="d-flex flex-wrap gap-1 mt-2">
+                                    <span class="small text-muted me-1 align-self-center">Suggestions:</span>
+                                    @foreach (var suggestion in (SelectedType == "income" ? IncomeSuggestions : CommonSuggestions))
+                                    {
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-2 suggestion-chip"
+                                                @onclick="() => ApplySuggestion(suggestion)">
+                                            @suggestion.Text
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+
+                            <!-- 4. Category Selector (Visual Chips) -->
+                            <div class="mb-4">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label fw-semibold small text-muted text-uppercase mb-0">
+                                        4. Category @(SelectedType == "income" ? "(Optional)" : "")
+                                    </label>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-muted"
+                                                @onclick="RefreshCategoriesAsync" title="Reload categories after creating one">
+                                            🔄 Refresh
+                                        </button>
+                                        <a href="/categories" target="_blank" class="small text-decoration-none text-primary">
+                                            + Manage Categories
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <div class="category-chips-grid mb-2">
+                                    <button type="button"
+                                            class="category-select-pill @(string.IsNullOrEmpty(SelectedCategoryId) ? "selected" : "")"
+                                            @onclick='() => SelectedCategoryId = ""'>
+                                        <span class="cat-pill-icon">📁</span>
+                                        <span class="cat-pill-text">Uncategorised</span>
+                                    </button>
+
+                                    @foreach (var cat in Categories)
+                                    {
+                                        var isSelected = SelectedCategoryId == cat.GlobalId.ToString();
+                                        <button type="button"
+                                                class="category-select-pill @(isSelected ? "selected" : "")"
+                                                style="border-color: @(isSelected ? (cat.Colour ?? "var(--c-indigo)") : "var(--dash-border)"); background: @(isSelected ? (cat.Colour ?? "#6366f1") + "15" : "transparent");"
+                                                @onclick="() => SelectedCategoryId = cat.GlobalId.ToString()">
+                                            <span class="cat-pill-icon">@(string.IsNullOrWhiteSpace(cat.Icon) ? "📁" : cat.Icon)</span>
+                                            <span class="cat-pill-text">@cat.Name</span>
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+
+                            <!-- 5. Date & 6. Bank Account Selector -->
+                            <div class="row g-3 mb-4">
+                                <!-- Date -->
+                                <div class="col-md-5">
+                                    <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                        5. Date <span class="text-danger">*</span>
+                                    </label>
+                                    <input type="date" class="form-control mb-1" @bind="Model.TransactionDate" />
+                                    <!-- Quick Date Chips -->
+                                    <div class="d-flex gap-1 flex-wrap">
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(Model.TransactionDate.Date == DateTime.Today ? "active" : "")"
+                                                @onclick="() => Model.TransactionDate = DateTime.Today">
+                                            Today
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(Model.TransactionDate.Date == DateTime.Today.AddDays(-1) ? "active" : "")"
+                                                @onclick="() => Model.TransactionDate = DateTime.Today.AddDays(-1)">
+                                            Yesterday
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(Model.TransactionDate.Date == DateTime.Today.AddDays(-2) ? "active" : "")"
+                                                @onclick="() => Model.TransactionDate = DateTime.Today.AddDays(-2)">
+                                            2 Days Ago
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Bank Account Selector -->
+                                <div class="col-md-7">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label class="form-label fw-semibold small text-muted text-uppercase mb-0">
+                                            6. @(SelectedType == "income" ? "Deposited Into Bank Account" : "Paid From Bank Account") <span class="text-danger">*</span>
+                                        </label>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-muted"
+                                                    @onclick="RefreshAccountsAsync" title="Reload accounts after creating one">
+                                                🔄 Refresh
+                                            </button>
+                                            <a href="/accounts" target="_blank" class="small text-decoration-none text-primary">
+                                                + Manage Accounts
+                                            </a>
+                                        </div>
+                                    </div>
+
+                                    @if (!AvailableBankAccountsList.Any())
+                                    {
+                                        <div class="p-2 rounded-2 mb-2" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border);">
+                                            <div class="d-flex align-items-center justify-content-between">
+                                                <span class="small text-muted">No accounts for this profile</span>
+                                                <a href="/accounts" target="_blank" class="btn btn-sm btn-primary py-0 px-2">➕ Create Account</a>
+                                            </div>
+                                        </div>
+                                        <input type="text" class="form-control form-control-sm" placeholder="Account Name (e.g. Cash, HDFC)" @bind="Model.Account" />
+                                    }
+                                    else
+                                    {
+                                        <select class="form-select mb-2" @bind="SelectedAccountString" @bind:after="OnAccountSelected">
+                                            <option value="">— Select Bank Account —</option>
+                                            @foreach (var acc in AvailableBankAccountsList)
+                                            {
+                                                var bal = GetAccountBalance(acc.GlobalId);
+                                                <option value="@acc.GlobalId">
+                                                    @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                                </option>
+                                            }
+                                        </select>
+
+                                        <!-- Quick 1-Tap Account Pills -->
+                                        <div class="d-flex flex-wrap gap-1">
+                                            @foreach (var acc in AvailableBankAccountsList)
+                                            {
+                                                var isSelected = Model.AccountGlobalId == acc.GlobalId;
+                                                <button type="button"
+                                                        class="btn btn-sm @(isSelected ? "btn-primary" : "btn-outline-secondary") py-0 px-2 quick-chip d-flex align-items-center gap-1"
+                                                        @onclick="() => SelectBankAccount(acc)">
+                                                    <span>@(string.IsNullOrWhiteSpace(acc.Icon) ? "🏦" : acc.Icon)</span>
+                                                    <span>@acc.AccountName</span>
+                                                </button>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+
+                            <!-- 7. Optional Details (Notes & Tags) -->
+                            <div class="mb-4">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span class="fw-semibold small text-muted text-uppercase">
+                                        7. Additional Details <span class="fw-normal text-muted">(Optional)</span>
+                                    </span>
+                                    <button type="button"
+                                            class="btn btn-link btn-sm p-0 text-decoration-none text-muted"
+                                            @onclick="() => ShowExtraDetails = !ShowExtraDetails">
+                                        @(ShowExtraDetails ? "▲ Hide Details" : "▼ Add Notes & Tags")
+                                    </button>
+                                </div>
+
+                                @if (ShowExtraDetails)
+                                {
+                                    <div class="p-3 rounded-3 animate-in" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                                        <div class="row g-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label small fw-semibold">Subcategory</label>
+                                                <input type="text"
+                                                       class="form-control form-control-sm"
+                                                       placeholder="@(SelectedType == "income" ? "e.g. Salary, Dividend, Bonus" : "e.g. Vegetables, Dinner, Metro")"
+                                                       @bind="Model.Subcategory" />
+                                            </div>
+
+                                            <div class="col-md-6">
+                                                <label class="form-label small fw-semibold">Tags</label>
+                                                <input type="text"
+                                                       class="form-control form-control-sm"
+                                                       placeholder="e.g. #personal, #urgent, #tax"
+                                                       @bind="Model.Tags" />
+                                            </div>
+
+                                            <div class="col-12">
+                                                <label class="form-label small fw-semibold">Notes / Remarks</label>
+                                                <textarea class="form-control form-control-sm"
+                                                          rows="2"
+                                                          placeholder="Add any specific receipt or memo notes here..."
+                                                          @bind="Model.Note"></textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+
+                            <!-- Submit Action Buttons -->
+                            <div class="d-flex gap-2 flex-wrap align-items-center pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                                <button type="submit" class="btn @(SelectedType == "income" ? "btn-success" : "btn-primary") px-4 py-2 fw-semibold" disabled="@IsSaving">
+                                    @if (IsSaving)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                        <span>Saving...</span>
+                                    }
+                                    else
+                                    {
+                                        <span>✓ @(IsEditMode ? "Save Changes" : (SelectedType == "income" ? "Save Income" : "Save Expense"))</span>
+                                    }
+                                </button>
+
+                                @if (!IsEditMode)
+                                {
+                                    <button type="button"
+                                            class="btn btn-outline-primary px-3 py-2 fw-semibold"
+                                            @onclick="HandleSubmitAndAddAnother"
+                                            disabled="@IsSaving">
+                                        ＋ Save & Add Another
+                                    </button>
+                                }
+
+                                <a href="/expenses" class="btn btn-outline-secondary px-3 py-2">
+                                    Cancel
+                                </a>
+                            </div>
+                        </EditForm>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Right Column: Live Receipt Preview ──────────────────────────── -->
+            <div class="col-lg-5">
+                <div class="sticky-top" style="top: 1.5rem;">
+                    <!-- Live Receipt Card -->
+                    <div class="card border-0 shadow-sm mb-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px; overflow: hidden;">
+                        <div class="card-header bg-transparent py-3 border-bottom d-flex align-items-center justify-content-between" style="border-color: var(--dash-border) !important;">
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="fs-5">@(SelectedType == "income" ? "📈" : "🧾")</span>
+                                <h6 class="mb-0 fw-bold" style="color: var(--dash-text);">
+                                    Live @(SelectedType == "income" ? "Income" : "Expense") Preview
+                                </h6>
+                            </div>
+                            <span class="badge rounded-pill @(SelectedType == "income" ? "bg-success-subtle text-success" : "bg-primary-subtle text-primary") small">
+                                Instant Sync
+                            </span>
+                        </div>
+
+                        <div class="card-body p-4">
+                            <!-- Big Amount Banner -->
+                            <div class="text-center p-3 mb-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                                <span class="text-muted small text-uppercase fw-semibold d-block mb-1">
+                                    @(SelectedType == "income" ? "Total Inflow" : "Total Outflow")
+                                </span>
+                                <h2 class="fw-bold mb-0 @(SelectedType == "income" ? "text-success" : "")" style="@(SelectedType == "expense" ? "color: var(--c-rose, #f43f5e);" : "") font-variant-numeric: tabular-nums;">
+                                    @(SelectedType == "income" ? "+ " : "- ")₹ @(Model.Amount > 0 ? Model.Amount.ToString("N2") : "0.00")
+                                </h2>
+                                <span class="text-muted small">INR (₹)</span>
+                            </div>
+
+                            <!-- Description & Category & Bank Account -->
+                            <div class="d-flex flex-column gap-2 small">
+                                <div class="d-flex justify-content-between py-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                                    <span class="text-muted">Description</span>
+                                    <strong style="color: var(--dash-text);">
+                                        @(string.IsNullOrWhiteSpace(Model.Description) ? "Untitled Transaction" : Model.Description)
+                                    </strong>
+                                </div>
+
+                                <div class="d-flex justify-content-between py-2 border-bottom align-items-center" style="border-color: var(--dash-border) !important;">
+                                    <span class="text-muted">Category</span>
+                                    @if (SelectedCategory != null)
+                                    {
+                                        <span class="badge rounded-pill px-2 py-1"
+                                              style="background-color: @(SelectedCategory.Colour ?? "#6366f1")20; color: @(SelectedCategory.Colour ?? "#6366f1"); border: 1px solid @(SelectedCategory.Colour ?? "#6366f1")40;">
+                                            @SelectedCategory.Icon @SelectedCategory.Name
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">📁 Uncategorised</span>
+                                    }
+                                </div>
+
+                                <div class="d-flex justify-content-between py-2 border-bottom align-items-center" style="border-color: var(--dash-border) !important;">
+                                    <span class="text-muted">Bank Account</span>
+                                    @if (SelectedBankAccount != null)
+                                    {
+                                        <span class="badge rounded-pill px-2 py-1"
+                                              style="background-color: @(SelectedBankAccount.Colour ?? "#6366f1")20; color: @(SelectedBankAccount.Colour ?? "#6366f1"); border: 1px solid @(SelectedBankAccount.Colour ?? "#6366f1")40;">
+                                            @(SelectedBankAccount.Icon ?? "🏦") @SelectedBankAccount.AccountName
+                                        </span>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(Model.Account))
+                                    {
+                                        <strong style="color: var(--dash-text);">@Model.Account</strong>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">Not specified</span>
+                                    }
+                                </div>
+
+                                <div class="d-flex justify-content-between py-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                                    <span class="text-muted">Date</span>
+                                    <span style="color: var(--dash-text);">@Model.TransactionDate.ToString("ddd, dd MMM yyyy")</span>
+                                </div>
+
+                                <div class="d-flex justify-content-between py-2 border-bottom align-items-center" style="border-color: var(--dash-border) !important;">
+                                    <span class="text-muted">Member</span>
+                                    @if (SelectedMember != null)
+                                    {
+                                        <span class="member-chip" style="background-color: @(SelectedMember.Colour ?? "#4f46e5");">
+                                            <span>@SelectedMember.Avatar</span>
+                                            <span>@SelectedMember.Name</span>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">Unassigned</span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Category Budget Status Widget (if expense has a budget) -->
+                    @if (SelectedType == "expense" && SelectedCategoryBudget != null && SelectedCategoryBudget.Budget.HasValue && SelectedCategoryBudget.Budget.Value > 0)
+                    {
+                        var budget = SelectedCategoryBudget.Budget.Value;
+                        var currentSpent = SelectedCategoryBudget.Spent;
+                        var newProjected = currentSpent + Model.Amount;
+                        var projectedPct = Math.Round((double)(newProjected / budget * 100), 1);
+                        var willExceed = newProjected > budget;
+
+                        <div class="card border-0 shadow-sm p-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="small fw-semibold text-muted">Category Budget Watch:</span>
+                                <span class="badge @(willExceed ? "bg-danger" : "bg-success")">
+                                    @(willExceed ? "🚨 Over Budget" : "✅ Within Limit")
+                                </span>
+                            </div>
+
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span>Spent this month: <strong>₹ @currentSpent.ToString("N0")</strong></span>
+                                <span>Budget: <strong>₹ @budget.ToString("N0")</strong></span>
+                            </div>
+
+                            <div class="progress mb-2" style="height: 8px; border-radius: 4px; background: var(--dash-surface-raised);">
+                                <div class="progress-bar @(willExceed ? "bg-danger" : "bg-primary")"
+                                     style="width: @Math.Min(projectedPct, 100)%;"></div>
+                            </div>
+
+                            <div class="small text-muted" style="font-size: 0.75rem;">
+                                @if (willExceed)
+                                {
+                                    <span class="text-danger fw-semibold">
+                                        Adding this expense puts @SelectedCategory?.Name ₹@((newProjected - budget).ToString("N0")) over budget!
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span>
+                                        ₹@((budget - newProjected).ToString("N0")) remaining after this expense (@projectedPct% used).
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
-@if (IsLoading)
-{
-    <p><em>Loading...</em></p>
-}
-else
-{
-    <div class="row">
-        <div class="col-md-6">
-            <EditForm Model="Model" OnValidSubmit="HandleSubmit">
-                <DataAnnotationsValidator />
+<style>
+    .type-tab {
+        border: 2px solid var(--dash-border);
+        border-radius: 12px;
+        background: var(--dash-surface);
+        color: var(--dash-text);
+        transition: all 0.15s ease;
+    }
+    .type-tab:hover {
+        border-color: var(--dash-primary);
+        background: var(--dash-surface-raised);
+    }
+    .type-tab.active-expense {
+        border-color: var(--c-rose, #f43f5e) !important;
+        background: rgba(244, 63, 94, 0.08) !important;
+        box-shadow: 0 0 0 1px var(--c-rose, #f43f5e);
+    }
+    .type-tab.active-income {
+        border-color: var(--c-emerald, #10b981) !important;
+        background: rgba(16, 185, 129, 0.08) !important;
+        box-shadow: 0 0 0 1px var(--c-emerald, #10b981);
+    }
+    .type-tab.active-transfer {
+        border-color: var(--dash-primary) !important;
+        background: rgba(99, 102, 241, 0.08) !important;
+        box-shadow: 0 0 0 1px var(--dash-primary);
+    }
+    .type-tab-sub {
+        font-size: 0.72rem;
+    }
 
-                <div class="mb-3">
-                    <label class="form-label">Amount (₹) <span class="text-danger">*</span></label>
-                    <input type="number" step="0.01" min="0" class="form-control"
-                           @bind="Model.Amount" @bind:event="oninput" placeholder="0.00" />
-                </div>
-
-                <div class="mb-3">
-                    <label class="form-label">Description <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" @bind="Model.Description"
-                           placeholder="What was this expense for?" maxlength="500" />
-                </div>
-
-                <div class="mb-3">
-                    <label class="form-label">Date <span class="text-danger">*</span></label>
-                    <input type="date" class="form-control" @bind="Model.TransactionDate" />
-                </div>
-
-                <div class="mb-3">
-                    <label class="form-label">Category</label>
-                    <select class="form-select" @bind="SelectedCategoryId">
-                        <option value="">— None —</option>
-                        @foreach (var cat in Categories)
-                        {
-                            <option value="@cat.GlobalId">@cat.Icon @cat.Name</option>
-                        }
-                    </select>
-                </div>
-
-                @if (!string.IsNullOrEmpty(ErrorMessage))
-                {
-                    <div class="alert alert-danger">@ErrorMessage</div>
-                }
-
-                <div class="d-flex gap-2">
-                    <button type="submit" class="btn btn-primary" disabled="@IsSaving">
-                        @if (IsSaving)
-                        {
-                            <span class="spinner-border spinner-border-sm me-1"></span>
-                        }
-                        @(IsEditMode ? "Save Changes" : "Add Expense")
-                    </button>
-                    <a href="/expenses" class="btn btn-outline-secondary">Cancel</a>
-                </div>
-            </EditForm>
-        </div>
-    </div>
-}
+    .amount-input-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+    .amount-currency {
+        position: absolute;
+        left: 1rem;
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: var(--dash-text-muted);
+        pointer-events: none;
+    }
+    .amount-input {
+        padding-left: 2.8rem !important;
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+        height: 60px;
+        border-radius: 10px;
+        color: var(--c-rose, #f43f5e) !important;
+        background: var(--dash-surface-raised) !important;
+        border: 2px solid var(--dash-border) !important;
+    }
+    .amount-input--income {
+        color: var(--c-emerald, #10b981) !important;
+    }
+    .amount-input--transfer {
+        color: var(--dash-primary) !important;
+    }
+    .amount-input:focus {
+        border-color: var(--dash-primary) !important;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+    }
+    .quick-chip {
+        font-size: 0.78rem;
+        border-radius: 6px;
+        transition: all 0.1s ease;
+    }
+    .quick-chip:hover {
+        background-color: var(--dash-surface-raised);
+    }
+    .quick-chip.active {
+        background-color: var(--dash-primary);
+        color: white !important;
+        border-color: var(--dash-primary);
+    }
+    .suggestion-chip {
+        font-size: 0.75rem;
+        border-radius: 12px;
+        padding: 2px 8px !important;
+    }
+    .category-chips-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        max-height: 180px;
+        overflow-y: auto;
+        padding: 4px;
+        background: var(--dash-surface-raised);
+        border: 1px solid var(--dash-border);
+        border-radius: 10px;
+    }
+    .category-select-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.65rem;
+        border-radius: 20px;
+        border: 1px solid var(--dash-border);
+        background: var(--dash-surface);
+        color: var(--dash-text);
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: transform 0.1s ease, border-color 0.1s ease;
+    }
+    .category-select-pill:hover {
+        transform: translateY(-1px);
+        border-color: var(--dash-primary);
+    }
+    .category-select-pill.selected {
+        font-weight: 600;
+        box-shadow: 0 0 0 1.5px var(--dash-primary);
+    }
+    .member-select-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 10px;
+        border: 1.5px solid var(--dash-border);
+        background: var(--dash-surface-raised);
+        color: var(--dash-text);
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+    .member-select-chip.selected {
+        background: var(--dash-surface);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+    .member-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 14px;
+        color: white;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+</style>
 
 @code {
     [Parameter] public Guid? GlobalId { get; set; }
+    [SupplyParameterFromQuery(Name = "type")] public string? QueryType { get; set; }
+    [SupplyParameterFromQuery(Name = "categoryId")] public string? QueryCategoryId { get; set; }
+    [SupplyParameterFromQuery(Name = "accountId")] public string? QueryAccountId { get; set; }
+    [SupplyParameterFromQuery(Name = "sourceAccountId")] public string? QuerySourceAccountId { get; set; }
+    [SupplyParameterFromQuery(Name = "destAccountId")] public string? QueryDestAccountId { get; set; }
 
     private bool IsEditMode => GlobalId.HasValue;
     private bool IsLoading = true;
     private bool IsSaving = false;
+    private bool SuccessAlert = false;
+    private string SuccessMessage = "Transaction saved successfully!";
+    private bool ShowExtraDetails = false;
     private string? ErrorMessage;
 
-    private List<Category> Categories = [];
-    private string? SelectedCategoryId;
+    // Type mode: "expense" | "income" | "transfer"
+    private string SelectedType = "expense";
 
-    // Simple form model — avoids binding directly to EF entities
+    private List<Category> Categories = [];
+    private List<FamilyMember> FamilyMembers = [];
+    private List<BankAccount> AllBankAccounts = [];
+    private List<ExpenseService.BankAccountWithBalance> AccountsWithBalances = [];
+    private Dictionary<Guid, ExpenseService.CategoryBudgetStatus> BudgetStatuses = [];
+
+    private string? SelectedCategoryId;
+    private string? SelectedMemberId;
+    private string? SelectedAccountString;
+
+    // Transfer fields
+    private Guid? TransferSourceAccountId;
+    private string? TransferSourceAccountString;
+    private Guid? TransferDestAccountId;
+    private string? TransferDestAccountString
+    {
+        get => TransferDestAccountId?.ToString();
+        set
+        {
+            if (Guid.TryParse(value, out var g)) TransferDestAccountId = g;
+            else TransferDestAccountId = null;
+        }
+    }
+    private decimal TransferAmount;
+    private DateTime TransferDate = DateTime.Today;
+    private string TransferDescription = string.Empty;
+    private string? TransferNote;
+
+    private List<BankAccount> AvailableBankAccountsList
+    {
+        get
+        {
+            if (Guid.TryParse(SelectedMemberId, out var mId))
+            {
+                var filtered = AllBankAccounts.Where(a => a.MemberGlobalId == mId).ToList();
+                if (filtered.Any()) return filtered;
+            }
+            return AllBankAccounts;
+        }
+    }
+
+    private Category? SelectedCategory =>
+        Guid.TryParse(SelectedCategoryId, out var g) ? Categories.FirstOrDefault(c => c.GlobalId == g) : null;
+
+    private FamilyMember? SelectedMember =>
+        Guid.TryParse(SelectedMemberId, out var g) ? FamilyMembers.FirstOrDefault(m => m.GlobalId == g) : null;
+
+    private BankAccount? SelectedBankAccount =>
+        Model.AccountGlobalId.HasValue ? AllBankAccounts.FirstOrDefault(a => a.GlobalId == Model.AccountGlobalId.Value) : null;
+
+    private BankAccount? TransferSourceAccount =>
+        TransferSourceAccountId.HasValue ? AllBankAccounts.FirstOrDefault(a => a.GlobalId == TransferSourceAccountId.Value) : null;
+
+    private BankAccount? TransferDestAccount =>
+        TransferDestAccountId.HasValue ? AllBankAccounts.FirstOrDefault(a => a.GlobalId == TransferDestAccountId.Value) : null;
+
+    private ExpenseService.CategoryBudgetStatus? SelectedCategoryBudget =>
+        Guid.TryParse(SelectedCategoryId, out var g) && BudgetStatuses.TryGetValue(g, out var s) ? s : null;
+
+    private record SuggestionItem(string Text, string? CategoryName = null);
+    private readonly List<SuggestionItem> CommonSuggestions =
+    [
+        new("🛒 Groceries"),
+        new("⛽ Petrol / Fuel"),
+        new("⚡ Electricity Bill"),
+        new("🍕 Dining Out"),
+        new("💊 Medicines"),
+        new("🥛 Milk & Bread"),
+        new("📶 Mobile Recharge")
+    ];
+
+    private readonly List<SuggestionItem> IncomeSuggestions =
+    [
+        new("💼 Monthly Salary"),
+        new("💻 Freelance / Project"),
+        new("📈 Dividend / Investment"),
+        new("🎁 Cash Gift"),
+        new("🏦 Bank Interest"),
+        new("🏷️ Cashback / Refund"),
+        new("🏠 Rental Income")
+    ];
+
+    private readonly List<string> TransferSuggestions =
+    [
+        "🏧 ATM Cash Withdrawal",
+        "💳 Credit Card Bill Pay",
+        "💰 Savings Allocation",
+        "📱 Wallet Top-up",
+        "🏦 Inter-bank Transfer"
+    ];
+
     private ExpenseFormModel Model = new();
 
     private class ExpenseFormModel
@@ -91,11 +1110,33 @@ else
         public decimal Amount { get; set; }
         public string Description { get; set; } = string.Empty;
         public DateTime TransactionDate { get; set; } = DateTime.Today;
+        public Guid? AccountGlobalId { get; set; }
+        public string? Account { get; set; }
+        public string? Note { get; set; }
+        public string? Subcategory { get; set; }
+        public string? Tags { get; set; }
     }
 
     protected override async Task OnInitializedAsync()
     {
         Categories = await ExpenseService.GetCategoriesAsync();
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
+        AllBankAccounts = await ExpenseService.GetBankAccountsAsync();
+        AccountsWithBalances = await ExpenseService.GetBankAccountsWithBalancesAsync();
+        SelectedMemberId = Session.CurrentUser?.GlobalId.ToString();
+
+        var statuses = await ExpenseService.GetCategoryBudgetStatusesAsync(DateTime.Today.Year, DateTime.Today.Month);
+        BudgetStatuses = statuses.ToDictionary(s => s.CategoryId);
+
+        if (!string.IsNullOrEmpty(QueryType))
+        {
+            SetTransactionType(QueryType.ToLowerInvariant());
+        }
+
+        if (!string.IsNullOrEmpty(QueryCategoryId))
+        {
+            SelectedCategoryId = QueryCategoryId;
+        }
 
         if (IsEditMode)
         {
@@ -106,28 +1147,241 @@ else
                 return;
             }
 
-            Model.Amount = expense.Amount;
+            // Security: Non-admin can only edit their own expenses
+            if (Session.CurrentUser?.Role != "Admin" && expense.MemberGlobalId.HasValue && expense.MemberGlobalId.Value != Session.CurrentUser?.GlobalId)
+            {
+                Nav.NavigateTo("/expenses");
+                return;
+            }
+
+            Model.Amount = Math.Abs(expense.Amount);
             Model.Description = expense.Description;
             Model.TransactionDate = expense.TransactionDate;
+            Model.Account = expense.Account;
+            Model.AccountGlobalId = expense.AccountGlobalId;
+            Model.Note = expense.Note;
+            Model.Subcategory = expense.Subcategory;
+            Model.Tags = expense.Tags;
+
             SelectedCategoryId = expense.CategoryGlobalId?.ToString();
+            if (expense.MemberGlobalId.HasValue)
+            {
+                SelectedMemberId = expense.MemberGlobalId.Value.ToString();
+            }
+
+            if (expense.AccountGlobalId.HasValue)
+            {
+                SelectedAccountString = expense.AccountGlobalId.Value.ToString();
+            }
+
+            // Detect type of existing expense
+            if (ExpenseService.IsTransferTransaction(expense))
+            {
+                SelectedType = "transfer";
+            }
+            else if (ExpenseService.IsIncomeTransaction(expense))
+            {
+                SelectedType = "income";
+            }
+            else
+            {
+                SelectedType = "expense";
+            }
+
+            if (!string.IsNullOrEmpty(Model.Note) || !string.IsNullOrEmpty(Model.Subcategory) || !string.IsNullOrEmpty(Model.Tags))
+            {
+                ShowExtraDetails = true;
+            }
+        }
+        else
+        {
+            // Pre-select accounts if provided via query or default to member's first account
+            if (Guid.TryParse(QueryAccountId, out var accGuid))
+            {
+                var match = AllBankAccounts.FirstOrDefault(a => a.GlobalId == accGuid);
+                if (match != null) SelectBankAccount(match);
+            }
+            else
+            {
+                var firstAcc = AvailableBankAccountsList.FirstOrDefault();
+                if (firstAcc != null) SelectBankAccount(firstAcc);
+            }
+
+            // For transfers
+            if (Guid.TryParse(QuerySourceAccountId, out var sGuid))
+            {
+                TransferSourceAccountId = sGuid;
+                TransferSourceAccountString = sGuid.ToString();
+            }
+            else
+            {
+                var first = AvailableBankAccountsList.FirstOrDefault();
+                if (first != null)
+                {
+                    TransferSourceAccountId = first.GlobalId;
+                    TransferSourceAccountString = first.GlobalId.ToString();
+                }
+            }
+
+            if (Guid.TryParse(QueryDestAccountId, out var dGuid))
+            {
+                TransferDestAccountId = dGuid;
+            }
+            else
+            {
+                var second = AvailableBankAccountsList.FirstOrDefault(a => a.GlobalId != TransferSourceAccountId);
+                if (second != null) TransferDestAccountId = second.GlobalId;
+            }
         }
 
         IsLoading = false;
     }
 
-    private async Task HandleSubmit()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && Session.IsAuthenticated && Session.CurrentUser is not null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("falimyAuth.setSession", Session.CurrentUser.GlobalId.ToString());
+            }
+            catch { }
+        }
+    }
+
+    private void SetTransactionType(string type)
+    {
+        SelectedType = type switch
+        {
+            "income" => "income",
+            "transfer" => "transfer",
+            _ => "expense"
+        };
+        ErrorMessage = null;
+    }
+
+    private decimal GetAccountBalance(Guid accountGlobalId)
+    {
+        var match = AccountsWithBalances.FirstOrDefault(a => a.Account.GlobalId == accountGlobalId);
+        return match?.CurrentBalance ?? 0m;
+    }
+
+    private async Task RefreshCategoriesAsync()
+    {
+        Categories = await ExpenseService.GetCategoriesAsync();
+        var statuses = await ExpenseService.GetCategoryBudgetStatusesAsync(DateTime.Today.Year, DateTime.Today.Month);
+        BudgetStatuses = statuses.ToDictionary(s => s.CategoryId);
+        StateHasChanged();
+    }
+
+    private async Task RefreshAccountsAsync()
+    {
+        AllBankAccounts = await ExpenseService.GetBankAccountsAsync();
+        AccountsWithBalances = await ExpenseService.GetBankAccountsWithBalancesAsync();
+        StateHasChanged();
+    }
+
+    private void OnMemberChanged(string memberId)
+    {
+        SelectedMemberId = memberId;
+        if (Guid.TryParse(memberId, out var mGuid))
+        {
+            var accountsForNewMember = AllBankAccounts.Where(a => a.MemberGlobalId == mGuid).ToList();
+            if (!accountsForNewMember.Any(a => a.GlobalId == Model.AccountGlobalId))
+            {
+                var first = accountsForNewMember.FirstOrDefault();
+                if (first != null) SelectBankAccount(first);
+                else
+                {
+                    Model.AccountGlobalId = null;
+                    SelectedAccountString = null;
+                }
+            }
+
+            // Also reset transfer accounts
+            var source = accountsForNewMember.FirstOrDefault();
+            TransferSourceAccountId = source?.GlobalId;
+            TransferSourceAccountString = source?.GlobalId.ToString();
+            var dest = accountsForNewMember.FirstOrDefault(a => a.GlobalId != TransferSourceAccountId);
+            TransferDestAccountId = dest?.GlobalId;
+        }
+    }
+
+    private void SelectBankAccount(BankAccount acc)
+    {
+        Model.AccountGlobalId = acc.GlobalId;
+        Model.Account = acc.AccountName;
+        SelectedAccountString = acc.GlobalId.ToString();
+    }
+
+    private void OnAccountSelected()
+    {
+        if (Guid.TryParse(SelectedAccountString, out var g))
+        {
+            var acc = AllBankAccounts.FirstOrDefault(a => a.GlobalId == g);
+            if (acc != null)
+            {
+                Model.AccountGlobalId = acc.GlobalId;
+                Model.Account = acc.AccountName;
+                return;
+            }
+        }
+        Model.AccountGlobalId = null;
+    }
+
+    private void OnTransferSourceChanged()
+    {
+        if (Guid.TryParse(TransferSourceAccountString, out var g))
+        {
+            TransferSourceAccountId = g;
+            if (TransferDestAccountId == g)
+            {
+                // Switch destination to another account
+                var other = AvailableBankAccountsList.FirstOrDefault(a => a.GlobalId != g);
+                TransferDestAccountId = other?.GlobalId;
+            }
+        }
+        else
+        {
+            TransferSourceAccountId = null;
+        }
+    }
+
+    private void AddAmount(decimal add)
+    {
+        Model.Amount += add;
+    }
+
+    private void ApplySuggestion(SuggestionItem s)
+    {
+        Model.Description = s.Text;
+    }
+
+    private async Task HandleTransferSubmit()
     {
         ErrorMessage = null;
 
-        if (Model.Amount <= 0)
+        if (TransferAmount <= 0)
         {
-            ErrorMessage = "Amount must be greater than zero.";
+            ErrorMessage = "Please enter a transfer amount greater than zero.";
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(Model.Description))
+        if (!TransferSourceAccountId.HasValue)
         {
-            ErrorMessage = "Description is required.";
+            ErrorMessage = "Please select the source bank account.";
+            return;
+        }
+
+        if (!TransferDestAccountId.HasValue)
+        {
+            ErrorMessage = "Please select the destination bank account.";
+            return;
+        }
+
+        if (TransferSourceAccountId == TransferDestAccountId)
+        {
+            ErrorMessage = "Source and Destination accounts must be different.";
             return;
         }
 
@@ -135,7 +1389,68 @@ else
 
         try
         {
+            Guid? memberId = Session.CurrentUser?.Role == "Admin"
+                ? (Guid.TryParse(SelectedMemberId, out var m) ? m : Session.CurrentUser?.GlobalId)
+                : Session.CurrentUser?.GlobalId;
+
+            await ExpenseService.CreateTransferAsync(new ExpenseService.TransferRequest(
+                TransferAmount,
+                TransferSourceAccountId.Value,
+                TransferDestAccountId.Value,
+                TransferDate,
+                TransferDescription,
+                TransferNote,
+                memberId
+            ));
+
+            Nav.NavigateTo("/expenses");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to execute transfer: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private async Task<bool> SaveExpenseCoreAsync()
+    {
+        ErrorMessage = null;
+
+        if (Model.Amount <= 0)
+        {
+            ErrorMessage = "Please enter an amount greater than zero.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(Model.Description))
+        {
+            ErrorMessage = "Please enter a description for this transaction.";
+            return false;
+        }
+
+        IsSaving = true;
+
+        try
+        {
             Guid? catGlobalId = Guid.TryParse(SelectedCategoryId, out var g) ? g : null;
+            Guid? memberId = Session.CurrentUser?.Role == "Admin"
+                ? (Guid.TryParse(SelectedMemberId, out var m) ? m : Session.CurrentUser?.GlobalId)
+                : Session.CurrentUser?.GlobalId;
+
+            // Compute tags based on mode
+            string? tags = Model.Tags;
+            string? subcat = Model.Subcategory;
+
+            if (SelectedType == "income")
+            {
+                if (string.IsNullOrEmpty(tags)) tags = "income";
+                else if (!tags.Contains("income", StringComparison.OrdinalIgnoreCase)) tags += ",income";
+
+                if (string.IsNullOrEmpty(subcat)) subcat = "Income";
+            }
 
             if (IsEditMode)
             {
@@ -143,9 +1458,15 @@ else
                 {
                     GlobalId = GlobalId!.Value,
                     Amount = Model.Amount,
-                    Description = Model.Description,
+                    Description = Model.Description.Trim(),
                     TransactionDate = Model.TransactionDate,
-                    CategoryGlobalId = catGlobalId
+                    Account = Model.Account?.Trim(),
+                    AccountGlobalId = Model.AccountGlobalId,
+                    Note = Model.Note?.Trim(),
+                    Subcategory = subcat?.Trim(),
+                    Tags = tags?.Trim(),
+                    CategoryGlobalId = catGlobalId,
+                    MemberGlobalId = memberId
                 });
             }
             else
@@ -153,18 +1474,60 @@ else
                 await ExpenseService.CreateExpenseAsync(new Expense
                 {
                     Amount = Model.Amount,
-                    Description = Model.Description,
+                    Description = Model.Description.Trim(),
                     TransactionDate = Model.TransactionDate,
-                    CategoryGlobalId = catGlobalId
-                });
+                    Account = Model.Account?.Trim(),
+                    AccountGlobalId = Model.AccountGlobalId,
+                    Note = Model.Note?.Trim(),
+                    Subcategory = subcat?.Trim(),
+                    Tags = tags?.Trim(),
+                    CategoryGlobalId = catGlobalId,
+                    MemberGlobalId = memberId
+                }, memberId);
             }
 
-            Nav.NavigateTo("/expenses");
+            return true;
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to save: {ex.Message}";
+            ErrorMessage = $"Failed to save transaction: {ex.Message}";
+            return false;
+        }
+        finally
+        {
             IsSaving = false;
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        var ok = await SaveExpenseCoreAsync();
+        if (ok)
+        {
+            Nav.NavigateTo("/expenses");
+        }
+    }
+
+    private async Task HandleSubmitAndAddAnother()
+    {
+        var ok = await SaveExpenseCoreAsync();
+        if (ok)
+        {
+            SuccessMessage = SelectedType == "income" ? "Income saved successfully!" : "Expense saved successfully!";
+            SuccessAlert = true;
+            Model.Amount = 0;
+            Model.Description = string.Empty;
+            Model.Note = null;
+            Model.Subcategory = null;
+            Model.Tags = null;
+            Model.TransactionDate = DateTime.Today;
+
+            var statuses = await ExpenseService.GetCategoryBudgetStatusesAsync(DateTime.Today.Year, DateTime.Today.Month);
+            BudgetStatuses = statuses.ToDictionary(s => s.CategoryId);
+
+            await Task.Delay(2500);
+            SuccessAlert = false;
+            StateHasChanged();
         }
     }
 }

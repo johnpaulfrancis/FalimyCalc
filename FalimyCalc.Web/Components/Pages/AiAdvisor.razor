@@ -1,0 +1,844 @@
+@page "/ai-advisor"
+@page "/analyzer"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject AiAdvisorService AdvisorService
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>AI Financial Advisor & Analyzer — FalimyCalc</PageTitle>
+
+<!-- ── Page Header ─────────────────────────────────────────────────────────── -->
+<div class="dash-header mb-3">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="dash-title mb-0">🤖 AI Financial Advisor & Analyzer</h1>
+            <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary fs-7 fw-semibold px-2 py-1">
+                Smart Diagnostics
+            </span>
+        </div>
+        <p class="dash-subtitle mt-1 mb-0">
+            Personalized wealth diagnostics, 50/30/20 budget analysis, and predictive goal guidance for @(Report?.ProfileDisplayName ?? "your profile")
+        </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3 shadow-sm d-flex align-items-center gap-1"
+                @onclick="() => ShowApiKeyModal = true">
+            <span>⚙️</span> <span>Gemini API Key @(string.IsNullOrEmpty(GeminiApiKey) ? "" : "✓")</span>
+        </button>
+        <button type="button" class="btn-primary-glow btn-sm" @onclick="RefreshAnalysisAsync">
+            <span class="btn-icon">⚡</span> Re-Analyze
+        </button>
+    </div>
+</div>
+
+<!-- ── Profile Switcher (Admin: Me / All / Profiles, Non-Admin: Current User) ─ -->
+@if (Session.CurrentUser?.Role == "Admin")
+{
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="small fw-semibold text-muted">Analyze Profile:</span>
+            <div class="view-toggle">
+                <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(false)">
+                    @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                </button>
+                <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(true)">
+                    👨‍👩‍👧‍👦 All Family View
+                </button>
+            </div>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="SelectedMemberId" @bind:after="OnMemberFilterChanged">
+                <option value="">👥 All Profiles (Family-Wide)</option>
+                @foreach (var member in FamilyMembers)
+                {
+                    <option value="@member.GlobalId">@member.Avatar @member.Name (@member.Role)</option>
+                }
+            </select>
+        </div>
+        <span class="small text-muted">
+            Report updated: @(Report?.GeneratedAt.ToString("h:mm tt") ?? "--")
+        </span>
+    </div>
+}
+else
+{
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4 p-2 px-3 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+        <div class="d-flex align-items-center gap-2">
+            <span class="fs-4">@Session.CurrentUser?.Avatar</span>
+            <div>
+                <strong style="color: var(--dash-text);">@Session.CurrentUser?.Name</strong>
+                <span class="badge bg-secondary-subtle text-secondary ms-1 small">Personal Profile</span>
+            </div>
+        </div>
+        <span class="small text-muted">
+            Report updated: @(Report?.GeneratedAt.ToString("h:mm tt") ?? "--")
+        </span>
+    </div>
+}
+
+@if (IsLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+        <h5 class="fw-bold" style="color: var(--dash-text);">AI Engine is crunching the numbers...</h5>
+        <p class="text-muted small">Evaluating cash flow velocity, 50/30/20 balance, emergency runway, and goal feasibility.</p>
+    </div>
+}
+else if (Report != null)
+{
+    <!-- ── 1. Financial Health Score Hero Banner ────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 16px; overflow: hidden;">
+        <div class="card-body p-4">
+            <div class="row align-items-center g-4">
+                <!-- Circular/Radial Score Visualizer -->
+                <div class="col-md-4 text-center border-md-end" style="border-color: var(--dash-border) !important;">
+                    <div class="d-inline-flex position-relative align-items-center justify-content-center" style="width: 140px; height: 140px;">
+                        <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; transform: rotate(-90deg);">
+                            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--dash-donut-track, rgba(0,0,0,0.06))" stroke-width="8" />
+                            <circle cx="50" cy="50" r="42" fill="none" stroke="@Report.HealthColor" stroke-width="8"
+                                    stroke-dasharray="@((2 * Math.PI * 42).ToString("F1"))"
+                                    stroke-dashoffset="@((2 * Math.PI * 42 * (1.0 - (Report.OverallHealthScore / 100.0))).ToString("F1"))"
+                                    stroke-linecap="round" style="transition: stroke-dashoffset 0.8s ease;" />
+                        </svg>
+                        <div class="position-absolute text-center">
+                            <span class="d-block fw-bold display-6 mb-0" style="color: var(--dash-text); line-height: 1;">
+                                @Report.OverallHealthScore
+                            </span>
+                            <span class="small text-muted" style="font-size: 0.7rem; font-weight: 600;">/ 100</span>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <span class="badge px-3 py-1 fs-6 fw-bold" style="background: @(Report.HealthColor)20; color: @Report.HealthColor; border: 1px solid @(Report.HealthColor)40;">
+                            @Report.HealthTier
+                        </span>
+                        <p class="small text-muted mt-2 mb-0" style="max-width: 240px; margin: 0 auto;">
+                            @Report.HealthTagline
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 5 Pillar Sub-Scores -->
+                <div class="col-md-8">
+                    <h5 class="fw-bold mb-3" style="color: var(--dash-text);">Financial Wellness Breakdown</h5>
+                    <div class="d-flex flex-column gap-3">
+                        <!-- Pillar 1: Savings & Cash Flow -->
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1 small">
+                                <span class="fw-semibold" style="color: var(--dash-text);">💰 Savings & Cash Flow Velocity</span>
+                                <span class="fw-bold" style="color: var(--dash-text);">@Report.SavingsScore / 20</span>
+                            </div>
+                            <div class="progress" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                <div class="progress-bar" style="width: @(Report.SavingsScore * 5)%; background: var(--c-emerald, #10b981);"></div>
+                            </div>
+                        </div>
+
+                        <!-- Pillar 2: Emergency Runway -->
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1 small">
+                                <span class="fw-semibold" style="color: var(--dash-text);">🛡️ Cash Buffer & Living Runway (@Report.CashRunwayMonths.ToString("F1") mo)</span>
+                                <span class="fw-bold" style="color: var(--dash-text);">@Report.RunwayScore / 20</span>
+                            </div>
+                            <div class="progress" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                <div class="progress-bar" style="width: @(Report.RunwayScore * 5)%; background: var(--c-indigo, #6366f1);"></div>
+                            </div>
+                        </div>
+
+                        <!-- Pillar 3: Budget Control -->
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1 small">
+                                <span class="fw-semibold" style="color: var(--dash-text);">⚖️ Spending Discipline & Budget Adherence</span>
+                                <span class="fw-bold" style="color: var(--dash-text);">@Report.BudgetControlScore / 20</span>
+                            </div>
+                            <div class="progress" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                <div class="progress-bar" style="width: @(Report.BudgetControlScore * 5)%; background: var(--c-teal, #06b6d4);"></div>
+                            </div>
+                        </div>
+
+                        <!-- Pillar 4: Goals Momentum -->
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1 small">
+                                <span class="fw-semibold" style="color: var(--dash-text);">🎯 Sinking Funds & Goals Momentum</span>
+                                <span class="fw-bold" style="color: var(--dash-text);">@Report.GoalsProgressScore / 20</span>
+                            </div>
+                            <div class="progress" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                <div class="progress-bar" style="width: @(Report.GoalsProgressScore * 5)%; background: var(--c-amber, #f59e0b);"></div>
+                            </div>
+                        </div>
+
+                        <!-- Pillar 5: Fixed Commitments & Subscriptions -->
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1 small">
+                                <span class="fw-semibold" style="color: var(--dash-text);">🔁 Fixed Commitments & Subscriptions Load</span>
+                                <span class="fw-bold" style="color: var(--dash-text);">@Report.FixedCommitmentsScore / 20</span>
+                            </div>
+                            <div class="progress" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                <div class="progress-bar" style="width: @(Report.FixedCommitmentsScore * 5)%; background: var(--c-purple, #8b5cf6);"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 2. Top Metric Cards ─────────────────────────────────────────────── -->
+    <div class="row g-3 mb-4">
+        <!-- Net Balance & Runway -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Net Balance & Runway</span>
+                    <span class="fs-5">🏦</span>
+                </div>
+                <h4 class="mb-1 fw-bold @(Report.TotalNetBalance >= 0 ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                    ₹ @Report.TotalNetBalance.ToString("N2")
+                </h4>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted small">Coverage:</span>
+                    <span class="badge @(Report.CashRunwayMonths >= 3 ? "bg-success-subtle text-success" : Report.CashRunwayMonths >= 1 ? "bg-warning-subtle text-warning" : "bg-danger-subtle text-danger")">
+                        @Report.CashRunwayMonths.ToString("F1") months buffer
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Monthly Savings Rate -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Monthly Savings Rate</span>
+                    <span class="fs-5">📈</span>
+                </div>
+                <h4 class="mb-1 fw-bold @(Report.NetCashFlow >= 0 ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                    @(Report.NetCashFlow >= 0 ? "+" : "")₹ @Report.NetCashFlow.ToString("N2")
+                </h4>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted small">Savings:</span>
+                    <span class="badge @(Report.SavingsRatePct >= 20 ? "bg-success-subtle text-success" : Report.SavingsRatePct >= 5 ? "bg-primary-subtle text-primary" : "bg-danger-subtle text-danger")">
+                        @Report.SavingsRatePct.ToString("F1")% of Inflow
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Goals Velocity -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Tracked Goals</span>
+                    <span class="fs-5">🎯</span>
+                </div>
+                <h4 class="mb-1 fw-bold" style="color: var(--dash-text);">
+                    @Report.GoalAssessments.Count(g => g.FeasibilityStatus != "Completed") Active
+                </h4>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted small">Completion:</span>
+                    <span class="badge bg-secondary-subtle text-secondary">
+                        @Report.GoalAssessments.Count(g => g.FeasibilityStatus == "Completed") Achieved
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subscriptions Load -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Fixed Subscriptions</span>
+                    <span class="fs-5">🔁</span>
+                </div>
+                <h4 class="mb-1 fw-bold" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">
+                    ₹ @Report.SubscriptionAudits.Sum(s => s.MonthlyCost).ToString("N0")<span class="fs-6 fw-normal text-muted">/mo</span>
+                </h4>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted small">Active Services:</span>
+                    <span class="badge bg-secondary-subtle text-secondary">
+                        @Report.SubscriptionAudits.Count Subscriptions
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 3. 50/30/20 Budget Rule Visualizer ───────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">⚖️</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">50 / 30 / 20 Budget Distribution</h5>
+                    <span class="small text-muted">Needs (50%), Discretionary Wants (30%), and Wealth Retention/Savings (20%)</span>
+                </div>
+            </div>
+            <span class="badge bg-secondary-subtle text-secondary small">
+                @Report.Rule50_30_20.Verdict
+            </span>
+        </div>
+
+        <div class="card-body p-3">
+            <!-- Multi-colored Distribution Bar -->
+            <div class="progress mb-3" style="height: 18px; border-radius: 9px; overflow: hidden; background: rgba(0,0,0,0.06);">
+                <div class="progress-bar bg-primary" role="progressbar" style="width: @Math.Min(100, Report.Rule50_30_20.NeedsPct)%;" title="Needs: @Report.Rule50_30_20.NeedsPct%">
+                    @if (Report.Rule50_30_20.NeedsPct >= 10) { <span>Needs @Report.Rule50_30_20.NeedsPct.ToString("F0")%</span> }
+                </div>
+                <div class="progress-bar bg-warning text-dark" role="progressbar" style="width: @Math.Min(100, Report.Rule50_30_20.WantsPct)%;" title="Wants: @Report.Rule50_30_20.WantsPct%">
+                    @if (Report.Rule50_30_20.WantsPct >= 10) { <span>Wants @Report.Rule50_30_20.WantsPct.ToString("F0")%</span> }
+                </div>
+                <div class="progress-bar bg-success" role="progressbar" style="width: @Math.Min(100, Report.Rule50_30_20.SavingsPct)%;" title="Savings: @Report.Rule50_30_20.SavingsPct%">
+                    @if (Report.Rule50_30_20.SavingsPct >= 10) { <span>Savings @Report.Rule50_30_20.SavingsPct.ToString("F0")%</span> }
+                </div>
+            </div>
+
+            <!-- Breakdown Cards -->
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid var(--c-indigo, #6366f1);">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small fw-semibold text-muted text-uppercase">1. Essential Needs</span>
+                            <span class="badge @(Report.Rule50_30_20.NeedsPct <= 55 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger") small">
+                                Target: 50%
+                            </span>
+                        </div>
+                        <h4 class="fw-bold mb-1" style="color: var(--dash-text); font-variant-numeric: tabular-nums;">
+                            ₹ @Report.Rule50_30_20.NeedsAmount.ToString("N2")
+                        </h4>
+                        <span class="small text-muted">@Report.Rule50_30_20.NeedsPct.ToString("F1")% of total monthly inflows</span>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid var(--c-amber, #f59e0b);">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small fw-semibold text-muted text-uppercase">2. Discretionary Wants</span>
+                            <span class="badge @(Report.Rule50_30_20.WantsPct <= 35 ? "bg-success-subtle text-success" : "bg-warning-subtle text-warning") small">
+                                Target: 30%
+                            </span>
+                        </div>
+                        <h4 class="fw-bold mb-1" style="color: var(--dash-text); font-variant-numeric: tabular-nums;">
+                            ₹ @Report.Rule50_30_20.WantsAmount.ToString("N2")
+                        </h4>
+                        <span class="small text-muted">@Report.Rule50_30_20.WantsPct.ToString("F1")% of total monthly inflows</span>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid var(--c-emerald, #10b981);">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small fw-semibold text-muted text-uppercase">3. Wealth & Savings</span>
+                            <span class="badge @(Report.Rule50_30_20.SavingsPct >= 20 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger") small">
+                                Target: 20%
+                            </span>
+                        </div>
+                        <h4 class="fw-bold mb-1 text-success" style="font-variant-numeric: tabular-nums;">
+                            ₹ @Report.Rule50_30_20.SavingsAmount.ToString("N2")
+                        </h4>
+                        <span class="small text-muted">@Report.Rule50_30_20.SavingsPct.ToString("F1")% net cash retention</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 4. Key Strengths & Vulnerabilities ──────────────────────────────── -->
+    <div class="row g-3 mb-4">
+        <!-- Positive Wins -->
+        <div class="col-md-6">
+            <div class="card h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="card-header bg-transparent py-3 d-flex align-items-center gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                    <span class="fs-5">🟢</span>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Key Financial Wins</h5>
+                </div>
+                <div class="card-body p-3">
+                    @if (!Report.KeyWins.Any())
+                    {
+                        <p class="text-muted small mb-0">Record more transactions and establish positive cash flow to unlock milestone badges.</p>
+                    }
+                    else
+                    {
+                        <div class="d-flex flex-column gap-2">
+                            @foreach (var win in Report.KeyWins)
+                            {
+                                <div class="p-2 px-3 rounded-3 d-flex align-items-start gap-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                                    <span class="fs-5">@win.Icon</span>
+                                    <div>
+                                        <strong class="small d-block text-success">@win.Title</strong>
+                                        <span class="small text-muted">@win.Description</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Vulnerabilities & Warnings -->
+        <div class="col-md-6">
+            <div class="card h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="card-header bg-transparent py-3 d-flex align-items-center gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                    <span class="fs-5">⚠️</span>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Vulnerabilities & Risk Warnings</h5>
+                </div>
+                <div class="card-body p-3">
+                    @if (!Report.Vulnerabilities.Any())
+                    {
+                        <div class="p-3 text-center rounded-3" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border);">
+                            <span class="fs-3 mb-1 d-block">🎉</span>
+                            <strong class="text-success small">No Major Vulnerabilities Detected!</strong>
+                            <p class="text-muted small mb-0 mt-1">Cash flow, runway buffer, and budget adherence are all in safe territory.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="d-flex flex-column gap-2">
+                            @foreach (var vuln in Report.Vulnerabilities)
+                            {
+                                var isDanger = vuln.Type == "danger";
+                                <div class="p-2 px-3 rounded-3 d-flex align-items-start gap-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-left: 3px solid @(isDanger ? "var(--c-rose)" : "var(--c-amber)");">
+                                    <span class="fs-5">@vuln.Icon</span>
+                                    <div>
+                                        <strong class="small d-block @(isDanger ? "text-danger" : "text-warning")">@vuln.Title</strong>
+                                        <span class="small text-muted">@vuln.Description</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 5. Prioritized Actionable Recommendations ───────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">💡</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">AI Recommended Action Plan</h5>
+                    <span class="small text-muted">High-impact steps to boost savings, protect capital, and accelerate goals</span>
+                </div>
+            </div>
+            <span class="badge bg-primary-subtle text-primary small">
+                @Report.Recommendations.Count High-Impact Moves
+            </span>
+        </div>
+
+        <div class="card-body p-3">
+            @if (!Report.Recommendations.Any())
+            {
+                <div class="p-3 text-center rounded-3" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border);">
+                    <span class="fs-3 mb-1 d-block">✨</span>
+                    <h6 class="fw-bold mb-1" style="color: var(--dash-text);">Financial Plan in Equilibrium</h6>
+                    <p class="text-muted small mb-0">Continue your regular contributions and monthly reviews.</p>
+                </div>
+            }
+            else
+            {
+                <div class="row g-3">
+                    @foreach (var rec in Report.Recommendations)
+                    {
+                        var isHigh = rec.Priority == "High";
+                        var badgeClass = isHigh ? "bg-danger-subtle text-danger" : rec.Priority == "Medium" ? "bg-warning-subtle text-warning" : "bg-success-subtle text-success";
+
+                        <div class="col-md-6 col-lg-4">
+                            <div class="p-3 rounded-3 h-100 d-flex flex-column justify-content-between shadow-sm" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid @(isHigh ? "var(--c-rose, #f43f5e)" : "var(--c-indigo, #6366f1)");">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="fs-4">@rec.Icon</span>
+                                            <strong class="small" style="color: var(--dash-text);">@rec.Title</strong>
+                                        </div>
+                                        <span class="badge @badgeClass" style="font-size: 0.65rem;">
+                                            @rec.Priority
+                                        </span>
+                                    </div>
+                                    <p class="small text-muted mb-2">
+                                        @rec.Description
+                                    </p>
+                                </div>
+                                <div class="d-flex align-items-center justify-content-between pt-2 border-top mt-auto" style="border-color: var(--dash-border) !important;">
+                                    @if (rec.EstimatedMonthlyImpact.HasValue && rec.EstimatedMonthlyImpact > 0)
+                                    {
+                                        <span class="badge bg-success-subtle text-success small">
+                                            Impact: ₹@rec.EstimatedMonthlyImpact.Value.ToString("N0")/mo
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span></span>
+                                    }
+                                    <a href="@rec.ActionUrl" class="btn btn-sm btn-outline-primary py-0 px-2 fs-7 fw-semibold">
+                                        @rec.ActionLabel →
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ── 6. Goal Feasibility & Trajectory Analysis ───────────────────────── -->
+    @if (Report.GoalAssessments.Any())
+    {
+        <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fs-5">🎯</span>
+                    <div>
+                        <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Goal Feasibility & Timeline Predictions</h5>
+                        <span class="small text-muted">Predictive timeline modeling based on your monthly surplus</span>
+                    </div>
+                </div>
+                <a href="/goals" class="btn btn-sm btn-outline-primary rounded-pill px-3">
+                    Manage Goals →
+                </a>
+            </div>
+
+            <div class="card-body p-3">
+                <div class="row g-3">
+                    @foreach (var g in Report.GoalAssessments)
+                    {
+                        var statusBadge = g.FeasibilityStatus == "Completed" ? "bg-success-subtle text-success" : g.FeasibilityStatus == "On Track" ? "bg-primary-subtle text-primary" : g.FeasibilityStatus == "Needs Acceleration" ? "bg-warning-subtle text-warning" : "bg-danger-subtle text-danger";
+
+                        <div class="col-md-6 col-xl-4">
+                            <div class="p-3 rounded-3 h-100 d-flex flex-column justify-content-between" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid @g.Colour;">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="fs-4">@g.Icon</span>
+                                            <div>
+                                                <strong class="small d-block text-truncate" style="max-width: 150px; color: var(--dash-text);" title="@g.GoalName">
+                                                    @g.GoalName
+                                                </strong>
+                                                <span class="text-muted small" style="font-size: 0.72rem;">
+                                                    @(g.TargetDate.HasValue ? $"Due {g.TargetDate.Value:MMM yyyy}" : "Open timeline")
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <span class="badge @statusBadge" style="font-size: 0.65rem;">
+                                            @g.FeasibilityStatus
+                                        </span>
+                                    </div>
+
+                                    <div class="d-flex justify-content-between align-items-baseline mb-1">
+                                        <span class="fw-bold text-success" style="font-variant-numeric: tabular-nums;">
+                                            ₹ @g.CurrentAmount.ToString("N0")
+                                        </span>
+                                        <span class="text-muted small" style="font-size: 0.75rem;">
+                                            of ₹ @g.TargetAmount.ToString("N0") (@g.ProgressPct.ToString("F0")%)
+                                        </span>
+                                    </div>
+
+                                    <div class="progress mb-2" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                        <div class="progress-bar" style="width: @g.ProgressPct%; background-color: @g.Colour;"></div>
+                                    </div>
+
+                                    <p class="small text-muted mb-0" style="font-size: 0.75rem;">
+                                        💡 @g.Advice
+                                    </p>
+                                </div>
+
+                                <div class="d-flex justify-content-between align-items-center pt-2 border-top mt-2" style="border-color: var(--dash-border) !important; font-size: 0.72rem;">
+                                    <span class="text-muted">
+                                        Required: <strong>₹@g.RequiredMonthlyToTarget.ToString("N0")/mo</strong>
+                                    </span>
+                                    <a href="/goals" class="text-decoration-none fw-semibold" style="color: @g.Colour;">
+                                        Deposit →
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- ── 7. Interactive "Ask the AI Financial Advisor" Assistant ─────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">💬</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Ask the AI Financial Advisor</h5>
+                    <span class="small text-muted">Instant context-aware answers calculated directly from your real numbers</span>
+                </div>
+            </div>
+            <span class="badge bg-secondary-subtle text-secondary small">
+                @(IsAiReplying ? "Thinking..." : "Interactive AI")
+            </span>
+        </div>
+
+        <div class="card-body p-3">
+            <!-- Quick Prompt Chips -->
+            <div class="d-flex gap-2 flex-wrap mb-3">
+                <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill"
+                        @onclick='() => SubmitQuestion("Can I afford a ₹25,000 purchase this month?")'>
+                    💳 Can I afford ₹25k this month?
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill"
+                        @onclick='() => SubmitQuestion("How long will my emergency fund last?")'>
+                    🛡️ How long is my runway?
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill"
+                        @onclick='() => SubmitQuestion("How can I save ₹10,000 more every month?")'>
+                    💡 How to save ₹10k more/mo?
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill"
+                        @onclick='() => SubmitQuestion("Am I on track for my financial goals?")'>
+                    🎯 Are my goals on track?
+                </button>
+            </div>
+
+            <!-- Chat History Area -->
+            <div class="chat-history-box p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); max-height: 420px; overflow-y: auto;">
+                @if (!ChatMessages.Any())
+                {
+                    <div class="text-center py-4 text-muted small">
+                        <span class="fs-3 mb-2 d-block">🤖</span>
+                        Ask any question above or type your own question below (e.g. <em>"Can I buy a new laptop for ₹65,000?"</em>).
+                    </div>
+                }
+                else
+                {
+                    @foreach (var msg in ChatMessages)
+                    {
+                        var isUser = msg.Role == "User";
+                        <div class="mb-3 d-flex @(isUser ? "justify-content-end" : "justify-content-start")">
+                            <div class="p-3 rounded-3" style="max-width: 85%; background: @(isUser ? "var(--c-indigo, #6366f1)" : "var(--dash-surface)"); color: @(isUser ? "#ffffff" : "var(--dash-text)"); border: 1px solid var(--dash-border);">
+                                <div class="d-flex align-items-center gap-1 mb-1 small fw-semibold text-uppercase opacity-75" style="font-size: 0.68rem;">
+                                    <span>@(isUser ? "You" : "🤖 FalimyCalc AI")</span>
+                                    @if (!isUser && msg.IsAiModelGenerated)
+                                    {
+                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.6rem;">Gemini Live</span>
+                                    }
+                                </div>
+                                <div class="chat-message-content small" style="white-space: pre-wrap; line-height: 1.55;">
+                                    @((MarkupString)FormatMarkdown(msg.Text))
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    @if (IsAiReplying)
+                    {
+                        <div class="mb-3 d-flex justify-content-start">
+                            <div class="p-3 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+                                <div class="spinner-grow spinner-grow-sm text-primary" role="status"></div>
+                                <span class="small text-muted ms-2">Analyzing your balance, cash flow, and goals...</span>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+
+            <!-- Question Input Form -->
+            <div class="input-group">
+                <input type="text" class="form-control" placeholder="Ask AI: e.g. 'Can I afford a ₹35,000 trip in November?' or 'How do I optimize my grocery spend?'"
+                       @bind="CurrentQuestion" @bind:event="oninput" @onkeydown="HandleKeyDown" />
+                <button class="btn btn-primary px-4 fw-semibold" type="button" @onclick="() => SubmitQuestion(CurrentQuestion)" disabled="@(IsAiReplying || string.IsNullOrWhiteSpace(CurrentQuestion))">
+                    Ask AI ⚡
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ── Gemini API Key Configuration Modal ─────────────────────────────────── -->
+@if (ShowApiKeyModal)
+{
+    <div class="modal-backdrop-custom" @onclick="() => ShowApiKeyModal = false"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 480px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                <span>⚙️ Gemini Live AI Configuration</span>
+            </h5>
+            <button type="button" class="btn-close" @onclick="() => ShowApiKeyModal = false"></button>
+        </div>
+        <div class="modal-panel-body">
+            <p class="small text-muted mb-3">
+                FalimyCalc includes a <strong>built-in intelligent Financial Reasoning Engine</strong> that works 100% offline with zero cost.
+                If you wish to augment advice with live natural language generation from Google Gemini (e.g. Gemini 2.5 Flash), paste your API key below.
+            </p>
+
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Gemini API Key (Optional)</label>
+                <input type="password" class="form-control" placeholder="AIzaSy..." @bind="GeminiApiKey" />
+                <span class="small text-muted mt-1 d-block" style="font-size: 0.72rem;">
+                    Key is stored in your active session. You can obtain a free key from <a href="https://aistudio.google.com/" target="_blank" class="text-primary">Google AI Studio</a>.
+                </span>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ShowApiKeyModal = false">
+                    Cancel
+                </button>
+                <button type="button" class="btn btn-primary btn-sm px-3" @onclick="SaveApiKeyAndRefreshAsync">
+                    Save & Re-Analyze
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool IsLoading = true;
+    private bool IsAiReplying = false;
+    private bool ShowApiKeyModal = false;
+    private string GeminiApiKey = "";
+
+    private AiAdvisorService.AiAnalysisReport? Report;
+    private List<FamilyMember> FamilyMembers = [];
+    private bool _showAllMembers = false;
+    private string? SelectedMemberId;
+
+    private string CurrentQuestion = "";
+    private List<ChatMessageItem> ChatMessages = [];
+
+    private record ChatMessageItem(string Role, string Text, bool IsAiModelGenerated);
+
+    private Guid? ActiveMemberFilter
+    {
+        get
+        {
+            if (Session.CurrentUser?.Role != "Admin")
+                return Session.CurrentUser?.GlobalId;
+
+            if (Guid.TryParse(SelectedMemberId, out var g))
+                return g;
+
+            return _showAllMembers ? null : Session.CurrentUser?.GlobalId;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
+        _showAllMembers = false; // Default admin view to their personal profile
+        await LoadAnalysisAsync();
+    }
+
+    private async Task SetViewMode(bool showAll)
+    {
+        _showAllMembers = showAll;
+        SelectedMemberId = null;
+        await LoadAnalysisAsync();
+    }
+
+    private async Task OnMemberFilterChanged()
+    {
+        if (string.IsNullOrEmpty(SelectedMemberId))
+        {
+            _showAllMembers = true;
+        }
+        else if (Guid.TryParse(SelectedMemberId, out var sg) && sg == Session.CurrentUser?.GlobalId)
+        {
+            _showAllMembers = false;
+        }
+        await LoadAnalysisAsync();
+    }
+
+    private async Task LoadAnalysisAsync()
+    {
+        IsLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var filter = ActiveMemberFilter;
+            Report = await AdvisorService.GenerateReportAsync(filter, GeminiApiKey);
+
+            // Seed initial greeting message if empty
+            if (!ChatMessages.Any())
+            {
+                ChatMessages.Add(new ChatMessageItem("AI", $"Hello {Report.ProfileDisplayName}! I am your **FalimyCalc AI Financial Advisor**. Your financial health score is **{Report.OverallHealthScore}/100 ({Report.HealthTier})**.\n\nYou have **₹{Report.TotalNetBalance:N2}** in net balance across your accounts ({Report.CashRunwayMonths:F1} months runway). What financial goals or purchasing decisions would you like to explore today?", false));
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading AI Advisor: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshAnalysisAsync()
+    {
+        await LoadAnalysisAsync();
+    }
+
+    private async Task SaveApiKeyAndRefreshAsync()
+    {
+        ShowApiKeyModal = false;
+        await LoadAnalysisAsync();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !IsAiReplying && !string.IsNullOrWhiteSpace(CurrentQuestion))
+        {
+            await SubmitQuestion(CurrentQuestion);
+        }
+    }
+
+    private async Task SubmitQuestion(string question)
+    {
+        if (string.IsNullOrWhiteSpace(question) || Report == null || IsAiReplying) return;
+
+        var qText = question.Trim();
+        CurrentQuestion = "";
+        ChatMessages.Add(new ChatMessageItem("User", qText, false));
+        IsAiReplying = true;
+        StateHasChanged();
+
+        try
+        {
+            var reply = await AdvisorService.AskAdvisorAsync(Report, qText, GeminiApiKey);
+            ChatMessages.Add(new ChatMessageItem("AI", reply.AnswerText, reply.IsAiModelGenerated));
+        }
+        catch (Exception ex)
+        {
+            ChatMessages.Add(new ChatMessageItem("AI", $"I encountered an issue processing your query: {ex.Message}. Please try asking in a different way.", false));
+        }
+        finally
+        {
+            IsAiReplying = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string FormatMarkdown(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        // Basic clean HTML escaping & bold / list replacements for pleasant chat formatting
+        var html = System.Net.WebUtility.HtmlEncode(text);
+        html = html.Replace("&lt;h3&gt;", "<h5 class=\"fw-bold mb-2\" style=\"color: var(--dash-text);\">")
+                   .Replace("&lt;/h3&gt;", "</h5>")
+                   .Replace("&lt;strong&gt;", "<strong>")
+                   .Replace("&lt;/strong&gt;", "</strong>")
+                   .Replace("&lt;em&gt;", "<em>")
+                   .Replace("&lt;/em&gt;", "</em>")
+                   .Replace("&lt;code&gt;", "<code>")
+                   .Replace("&lt;/code&gt;", "</code>");
+
+        // Convert double asterisks to bold
+        html = System.Text.RegularExpressions.Regex.Replace(html, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
+        // Convert single asterisks to italic
+        html = System.Text.RegularExpressions.Regex.Replace(html, @"\*(.+?)\*", "<em>$1</em>");
+        // Convert headers ### to h6
+        html = System.Text.RegularExpressions.Regex.Replace(html, @"###\s*(.+)", "<h6 class=\"fw-bold mb-2 mt-1\">$1</h6>");
+
+        return html;
+    }
+}

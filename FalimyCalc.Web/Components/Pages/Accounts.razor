@@ -1,0 +1,891 @@
+@page "/accounts"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>Bank Accounts — FalimyCalc</PageTitle>
+
+<!-- ── Page Header ─────────────────────────────────────────────────────────── -->
+<div class="dash-header mb-3">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="dash-title mb-0">Bank Accounts</h1>
+            <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary fs-7 fw-semibold px-2 py-1">
+                @AccountsWithBalances.Count accounts
+            </span>
+        </div>
+        <p class="dash-subtitle mt-1 mb-0">
+            @(Session.CurrentUser?.Role == "Admin"
+                ? "Manage bank accounts for all family profiles, set opening balances, and track live funds"
+                : $"Manage your bank accounts and track live balances ({Session.CurrentUser?.Name})")
+        </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <button type="button" class="btn-primary-glow" @onclick="ShowAddForm">
+            <span class="btn-icon">＋</span> Add Account
+        </button>
+    </div>
+</div>
+
+<!-- ── Admin One-Tap Switcher (Me vs All Family) ───────────────────────────── -->
+@if (Session.CurrentUser?.Role == "Admin")
+{
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+        <div class="d-flex align-items-center gap-2">
+            <span class="small fw-semibold text-muted">Quick View:</span>
+            <div class="view-toggle">
+                <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(false)">
+                    @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                </button>
+                <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(true)">
+                    👨‍👩‍👧‍👦 All Family
+                </button>
+            </div>
+        </div>
+
+        <div class="view-context-label mb-0">
+            @if (string.IsNullOrEmpty(SelectedMemberId))
+            {
+                if (_showAllMembers)
+                {
+                    <span>👨‍👩‍👧‍👦 Showing <strong>all family</strong> accounts</span>
+                }
+                else
+                {
+                    <span>@Session.CurrentUser?.Avatar Showing only <strong>your (@Session.CurrentUser?.Name)</strong> accounts</span>
+                }
+            }
+            else if (Guid.TryParse(SelectedMemberId, out var selectedGuid))
+            {
+                var selMem = FamilyMembers.FirstOrDefault(m => m.GlobalId == selectedGuid);
+                if (selMem != null)
+                {
+                    <span>@selMem.Avatar Filtered by <strong>@selMem.Name</strong>'s accounts</span>
+                }
+            }
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+            <span class="small text-muted fw-semibold d-none d-sm-inline">Filter Profile:</span>
+            <select class="form-select form-select-sm" style="width: 170px;" @bind="SelectedMemberId" @bind:after="OnMemberFilterChanged">
+                <option value="">👨‍👩‍👧‍👦 All Family</option>
+                @foreach (var member in FamilyMembers)
+                {
+                    <option value="@member.GlobalId">@member.Avatar @member.Name</option>
+                }
+            </select>
+        </div>
+    </div>
+}
+
+<!-- ── Top KPI Stat Cards ──────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+    <!-- Net Combined Balance -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle @(TotalNetBalance >= 0 ? "bg-success bg-opacity-10 text-success" : "bg-danger bg-opacity-10 text-danger")">
+                🏦
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Net Total Balance</span>
+                <h3 class="mb-0 fw-bold @(TotalNetBalance >= 0 ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                    ₹ @TotalNetBalance.ToString("N2")
+                </h3>
+                <span class="badge @(TotalNetBalance >= 0 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")" style="font-size: 0.72rem;">
+                    @(TotalNetBalance >= 0 ? "✅ Net Positive" : "🚨 Overdrawn / Deficit")
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Total Spent from Accounts -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-danger bg-opacity-10 text-danger">
+                💳
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Total Expenses Paid</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">
+                    ₹ @TotalSpentAllAccounts.ToString("N2")
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">Across @TotalTransactionsCount transactions</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Baseline Initial Balances -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-primary bg-opacity-10 text-primary">
+                ⚖️
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Baseline Opening Funds</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--dash-text); font-variant-numeric: tabular-nums;">
+                    ₹ @TotalInitialBalance.ToString("N2")
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">Initial configured sum</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Count / Breakdown -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-info bg-opacity-10 text-info">
+                📑
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Active Accounts</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--dash-text);">
+                    @AccountsWithBalances.Count
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">
+                    @NegativeAccountsCount negative, @PositiveAccountsCount positive
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Filter & Search Toolbar ─────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface);">
+    <div class="card-body p-3">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <!-- Search Box -->
+            <div class="search-input-wrap flex-grow-1" style="max-width: 320px;">
+                <span class="search-icon">🔍</span>
+                <input type="text"
+                       class="form-control form-control-sm ps-5"
+                       placeholder="Search account, bank name..."
+                       @bind="SearchText"
+                       @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(SearchText))
+                {
+                    <button type="button" class="btn-clear-search" @onclick="() => SearchText = string.Empty">✕</button>
+                }
+            </div>
+
+            <!-- Account Type Filter Pills -->
+            <div class="d-flex align-items-center gap-1 flex-wrap">
+                <button type="button"
+                        class="btn btn-sm @(ActiveTypeFilter == "all" ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick='() => ActiveTypeFilter = "all"'>
+                    All (@AccountsWithBalances.Count)
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveTypeFilter == "savings" ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick='() => ActiveTypeFilter = "savings"'>
+                    Savings
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveTypeFilter == "credit" ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick='() => ActiveTypeFilter = "credit"'>
+                    Credit Cards
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveTypeFilter == "negative" ? "btn-danger" : "btn-outline-danger")"
+                        @onclick='() => ActiveTypeFilter = "negative"'>
+                    Overdrawn / Negative (@NegativeAccountsCount)
+                </button>
+            </div>
+
+            <!-- Sort Selector -->
+            <div class="d-flex align-items-center gap-2">
+                <span class="small text-muted fw-semibold text-nowrap">Sort:</span>
+                <select class="form-select form-select-sm" style="width: 170px;" @bind="SelectedSort">
+                    <option value="name_asc">🔤 Name (A → Z)</option>
+                    <option value="bal_desc">💰 Highest Balance</option>
+                    <option value="bal_asc">📉 Lowest Balance</option>
+                    <option value="spent_desc">💳 Highest Spent</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Accounts Grid ───────────────────────────────────────────────────────── -->
+@if (IsLoading)
+{
+    <div class="skeleton-wrapper">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+    </div>
+}
+else if (!FilteredAccounts.Any())
+{
+    <div class="card border-0 shadow-sm text-center py-5" style="background: var(--dash-surface);">
+        <div class="py-4">
+            <span class="fs-1 d-block mb-2">🏦</span>
+            <h5 class="fw-bold mb-1">No bank accounts found</h5>
+            <p class="text-muted small mb-3">Add your first bank account to track transactions and balances.</p>
+            <button class="btn btn-primary btn-sm" @onclick="ShowAddForm">➕ Add Bank Account</button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var item in FilteredAccounts)
+        {
+            var acc = item.Account;
+            var isNegative = item.CurrentBalance < 0;
+
+            <div class="col-md-6 col-lg-4">
+                <div class="card h-100 shadow-sm border-0 position-relative account-card"
+                     style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 12px; overflow: hidden; transition: transform 0.15s ease, box-shadow 0.15s ease;">
+                    <!-- Top accent color bar -->
+                    <div style="height: 5px; background: @(acc.Colour ?? "var(--c-indigo)"); width: 100%;"></div>
+
+                    <div class="card-body d-flex flex-column justify-content-between p-3">
+                        <!-- Header: Icon, Account Name, Bank, and Actions -->
+                        <div class="d-flex align-items-start justify-content-between mb-3">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="account-icon-box" style="background: @(acc.Colour ?? "#6366f1")20; border: 1px solid @(acc.Colour ?? "#6366f1")40; color: @(acc.Colour ?? "#6366f1");">
+                                    <span class="fs-4">@(string.IsNullOrWhiteSpace(acc.Icon) ? "🏦" : acc.Icon)</span>
+                                </div>
+                                <div>
+                                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text); font-size: 1.05rem;">@acc.AccountName</h5>
+                                    <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
+                                        @if (!string.IsNullOrWhiteSpace(acc.BankName))
+                                        {
+                                            <span class="badge bg-secondary-subtle text-secondary small">@acc.BankName</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(acc.AccountType))
+                                        {
+                                            <span class="badge bg-primary-subtle text-primary small">@acc.AccountType</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(acc.AccountNumberSuffix))
+                                        {
+                                            <span class="text-muted small font-monospace">•••• @acc.AccountNumberSuffix</span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Edit / Delete actions -->
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-secondary" title="Edit Account"
+                                        @onclick="() => StartEdit(acc)">
+                                    ✏️
+                                </button>
+                                <button type="button" class="btn btn-outline-danger" title="Delete Account"
+                                        @onclick="() => ConfirmDelete(acc)">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Owner Badge -->
+                        @if (item.Owner != null)
+                        {
+                            <div class="d-flex align-items-center gap-2 mb-3">
+                                <span class="small text-muted">Profile:</span>
+                                <span class="member-chip" style="background-color: @(item.Owner.Colour ?? "#4f46e5");">
+                                    <span>@item.Owner.Avatar</span>
+                                    <span>@item.Owner.Name</span>
+                                </span>
+                            </div>
+                        }
+
+                        <!-- Financial Balances Section -->
+                        <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="small text-muted fw-semibold text-uppercase" style="font-size: 0.72rem;">Current Balance</span>
+                                @if (isNegative)
+                                {
+                                    <span class="badge bg-danger" style="font-size: 0.7rem;">🚨 Overdrawn / Due</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 0.7rem;">✅ Available</span>
+                                }
+                            </div>
+
+                            <!-- Big Current Balance Display -->
+                            <h3 class="fw-bold mb-2 @(isNegative ? "text-danger" : "text-success")" style="font-variant-numeric: tabular-nums;">
+                                ₹ @item.CurrentBalance.ToString("N2")
+                            </h3>
+
+                            <!-- Balance Breakdown: Initial vs Total Spent vs Inflows -->
+                            <div class="d-flex justify-content-between small text-muted pt-2 border-top" style="border-color: var(--dash-border) !important; font-size: 0.78rem;">
+                                <span>Initial: <strong>₹ @item.InitialBalance.ToString("N2")</strong></span>
+                                <span>In: <strong class="text-success">+₹@item.TotalReceived.ToString("N0")</strong></span>
+                                <span>Out: <strong style="color: var(--c-rose, #f43f5e);">-₹@item.TotalSpent.ToString("N0")</strong></span>
+                            </div>
+                        </div>
+
+                        <!-- 1-Tap Quick Action Buttons on Account -->
+                        <div class="d-flex gap-1 mb-2">
+                            <a href="/expenses/add?type=income&accountId=@acc.GlobalId" class="btn btn-sm btn-outline-success flex-fill py-1 px-1 text-center" style="font-size: 0.75rem;" title="Deposit money or record income for this account">
+                                <span>📈 Deposit</span>
+                            </a>
+                            <a href="/expenses/add?type=transfer&sourceAccountId=@acc.GlobalId" class="btn btn-sm btn-outline-primary flex-fill py-1 px-1 text-center" style="font-size: 0.75rem;" title="Transfer money from this account to another">
+                                <span>🔁 Transfer</span>
+                            </a>
+                            <a href="/expenses/add?type=expense&accountId=@acc.GlobalId" class="btn btn-sm btn-outline-danger flex-fill py-1 px-1 text-center" style="font-size: 0.75rem;" title="Add an expense from this account">
+                                <span>💸 Expense</span>
+                            </a>
+                        </div>
+
+                        <!-- Card Footer Links -->
+                        <div class="d-flex justify-content-between align-items-center small">
+                            <span class="text-muted">
+                                @item.TransactionCount transactions recorded
+                            </span>
+                            <a href="/expenses?accountId=@acc.GlobalId" class="btn btn-link btn-sm p-0 text-decoration-none fw-semibold">
+                                View Transactions →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<!-- ── Add / Edit Account Modal ───────────────────────────────────────────── -->
+@if (ShowForm)
+{
+    <div class="modal-backdrop-custom" @onclick="HideForm"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 520px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold">@(EditingAccount is null ? "✨ Add Bank Account" : "✏️ Edit Bank Account")</h5>
+            <button type="button" class="btn-close" @onclick="HideForm"></button>
+        </div>
+        <div class="modal-panel-body">
+            @if (!string.IsNullOrEmpty(FormError))
+            {
+                <div class="alert alert-danger py-2 px-3 small mb-3">
+                    @FormError
+                </div>
+            }
+
+            <!-- Live Account Preview Card -->
+            <div class="text-center p-3 mb-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <span class="text-muted small text-uppercase fw-semibold d-block mb-1">Live Account Preview</span>
+                <div class="d-flex align-items-center justify-content-center gap-2">
+                    <span class="fs-4">@(string.IsNullOrWhiteSpace(FormIcon) ? "🏦" : FormIcon)</span>
+                    <strong class="fs-6" style="color: var(--dash-text);">
+                        @(string.IsNullOrWhiteSpace(FormName) ? "Account Name" : FormName)
+                    </strong>
+                    @if (!string.IsNullOrWhiteSpace(FormBankName))
+                    {
+                        <span class="badge bg-secondary-subtle text-secondary small">@FormBankName</span>
+                    }
+                </div>
+                <div class="mt-2">
+                    <span class="small text-muted">Initial Opening Balance: </span>
+                    <strong class="@(FormInitialBalance < 0 ? "text-danger" : "text-success")" style="font-variant-numeric: tabular-nums;">
+                        ₹ @FormInitialBalance.ToString("N2")
+                    </strong>
+                </div>
+            </div>
+
+            <div class="row g-3">
+                <!-- Owner Profile Selector (for Admin) -->
+                @if (Session.CurrentUser?.Role == "Admin")
+                {
+                    <div class="col-12">
+                        <label class="form-label fw-semibold small">Account Owner Profile <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="FormMemberGlobalId">
+                            @foreach (var member in FamilyMembers)
+                            {
+                                <option value="@member.GlobalId">@member.Avatar @member.Name (@member.Role)</option>
+                            }
+                        </select>
+                    </div>
+                }
+
+                <!-- Account Name -->
+                <div class="col-md-7">
+                    <label class="form-label fw-semibold small">Account Name <span class="text-danger">*</span></label>
+                    <input class="form-control"
+                           placeholder="e.g. HDFC Salary, ICICI Amazon Card"
+                           @bind="FormName"
+                           maxlength="100" />
+                </div>
+
+                <!-- Account Type -->
+                <div class="col-md-5">
+                    <label class="form-label fw-semibold small">Account Type</label>
+                    <select class="form-select" @bind="FormAccountType">
+                        <option value="Savings">Savings Account</option>
+                        <option value="Current">Current Account</option>
+                        <option value="Credit Card">Credit Card</option>
+                        <option value="Cash Wallet">Cash / Wallet</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+
+                <!-- Initial Balance (supports negative numbers) -->
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label class="form-label fw-semibold small mb-0">
+                            Initial Balance (₹) <span class="text-danger">*</span>
+                        </label>
+                        <span class="text-muted small" style="font-size: 0.75rem;">Can be negative for credit cards/overdrafts</span>
+                    </div>
+                    <div class="input-group mb-1">
+                        <span class="input-group-text">₹</span>
+                        <input type="number"
+                               step="0.01"
+                               class="form-control"
+                               placeholder="e.g. 25000 or -5000"
+                               @bind="FormInitialBalance" />
+                    </div>
+
+                    <!-- Quick Balance Preset Chips -->
+                    <div class="d-flex flex-wrap gap-1 align-items-center mt-1">
+                        <span class="small text-muted me-1">Presets:</span>
+                        <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" @onclick="() => FormInitialBalance = -10000">-₹10,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormInitialBalance = 0">₹0</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormInitialBalance = 5000">₹5,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormInitialBalance = 25000">₹25,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormInitialBalance = 50000">₹50,000</button>
+                    </div>
+                </div>
+
+                <!-- Bank Name & Account Number Suffix -->
+                <div class="col-md-7">
+                    <label class="form-label fw-semibold small">Bank Name <span class="text-muted fw-normal">(optional)</span></label>
+                    <input class="form-control"
+                           placeholder="e.g. HDFC Bank, SBI, ICICI"
+                           @bind="FormBankName"
+                           maxlength="100" />
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label fw-semibold small">Last 4 Digits <span class="text-muted fw-normal">(optional)</span></label>
+                    <input class="form-control"
+                           placeholder="e.g. 4021"
+                           @bind="FormAccountNumberSuffix"
+                           maxlength="20" />
+                </div>
+
+                <!-- Icon Picker -->
+                <div class="col-12">
+                    <label class="form-label fw-semibold small mb-1">Icon / Emoji</label>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <input class="form-control" style="max-width: 70px; text-align: center; font-size: 1.2rem;" @bind="FormIcon" maxlength="10" />
+                        <div class="d-flex gap-1 p-1 rounded-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <button type="button" class="btn btn-sm btn-outline-secondary p-1 border-0 fs-5" @onclick='() => FormIcon = "🏦"'>🏦</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary p-1 border-0 fs-5" @onclick='() => FormIcon = "💳"'>💳</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary p-1 border-0 fs-5" @onclick='() => FormIcon = "💵"'>💵</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary p-1 border-0 fs-5" @onclick='() => FormIcon = "📱"'>📱</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary p-1 border-0 fs-5" @onclick='() => FormIcon = "🪙"'>🪙</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary p-1 border-0 fs-5" @onclick='() => FormIcon = "💼"'>💼</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Color Swatches -->
+                <div class="col-12">
+                    <label class="form-label fw-semibold small mb-1">Accent Color</label>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="color" class="form-control form-control-color" style="width: 44px; height: 36px;" @bind="FormColour" />
+                        @foreach (var color in PresetColors)
+                        {
+                            <button type="button"
+                                    class="color-swatch-btn @(FormColour.Equals(color, StringComparison.OrdinalIgnoreCase) ? "selected" : "")"
+                                    style="background-color: @color;"
+                                    @onclick="() => FormColour = color">
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-panel-footer">
+            <button type="button" class="btn btn-outline-secondary" @onclick="HideForm">Cancel</button>
+            <button type="button" class="btn btn-primary px-4" @onclick="SaveAccount" disabled="@IsSaving">
+                @if (IsSaving)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    <span>Saving...</span>
+                }
+                else
+                {
+                    <span>Save Account</span>
+                }
+            </button>
+        </div>
+    </div>
+}
+
+<!-- ── Delete Confirmation Modal ───────────────────────────────────────────── -->
+@if (AccountToDelete is not null)
+{
+    <div class="modal-backdrop-custom" @onclick="CancelDelete"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 440px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold text-danger">⚠️ Delete Account</h5>
+            <button type="button" class="btn-close" @onclick="CancelDelete"></button>
+        </div>
+        <div class="modal-panel-body">
+            <p class="mb-2">Are you sure you want to delete this bank account?</p>
+            <div class="p-3 rounded-3 text-center my-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <span class="fs-4 d-block mb-1">@(AccountToDelete.Icon ?? "🏦")</span>
+                <strong class="fs-6" style="color: var(--dash-text);">@AccountToDelete.AccountName</strong>
+            </div>
+            <div class="alert alert-warning py-2 px-3 small mb-0">
+                <strong>Note:</strong> Existing expenses previously paid from this account will not be deleted; they will simply display the recorded account name without linking.
+            </div>
+        </div>
+        <div class="modal-panel-footer">
+            <button type="button" class="btn btn-outline-secondary" @onclick="CancelDelete">Cancel</button>
+            <button type="button" class="btn btn-danger px-4" @onclick="DeleteConfirmed">Delete Account</button>
+        </div>
+    </div>
+}
+
+<style>
+    .account-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08) !important;
+    }
+    .account-icon-box {
+        width: 46px;
+        height: 46px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .stat-icon-circle {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        flex-shrink: 0;
+    }
+    .color-swatch-btn {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        cursor: pointer;
+        padding: 0;
+        transition: transform 0.1s ease;
+    }
+    .color-swatch-btn:hover {
+        transform: scale(1.15);
+    }
+    .color-swatch-btn.selected {
+        border-color: var(--dash-text);
+        box-shadow: 0 0 0 2px var(--dash-surface);
+    }
+    .member-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.2rem 0.55rem;
+        border-radius: 12px;
+        color: white;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+    .modal-backdrop-custom {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(4px);
+        z-index: 1050;
+    }
+    .modal-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 92%;
+        background: var(--dash-surface);
+        border: 1px solid var(--dash-border);
+        border-radius: 14px;
+        z-index: 1060;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+    }
+    .modal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--dash-border);
+    }
+    .modal-panel-body {
+        padding: 1.25rem;
+        overflow-y: auto;
+    }
+    .modal-panel-footer {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        padding: 1rem 1.25rem;
+        border-top: 1px solid var(--dash-border);
+    }
+    .animate-in {
+        animation: scaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes scaleIn {
+        from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+</style>
+
+@code {
+    private List<ExpenseService.BankAccountWithBalance> AccountsWithBalances = [];
+    private List<FamilyMember> FamilyMembers = [];
+    private bool IsLoading = true;
+    private bool ShowForm = false;
+    private bool IsSaving = false;
+    private string? FormError;
+
+    // Admin view toggle (defaults to admin's own account)
+    private bool _showAllMembers = false;
+    private string? SelectedMemberId;
+
+    // Filters & Search
+    private string SearchText = string.Empty;
+    private string ActiveTypeFilter = "all";
+    private string SelectedSort = "name_asc";
+
+    // Form fields
+    private string FormName = string.Empty;
+    private decimal FormInitialBalance = 0m;
+    private string? FormBankName;
+    private string FormAccountType = "Savings";
+    private string? FormAccountNumberSuffix;
+    private string FormColour = "#6366f1";
+    private string FormIcon = "🏦";
+    private Guid FormMemberGlobalId;
+
+    private BankAccount? EditingAccount;
+    private BankAccount? AccountToDelete;
+
+    private readonly List<string> PresetColors =
+    [
+        "#6366f1", "#10b981", "#f43f5e", "#f59e0b",
+        "#06b6d4", "#3b82f6", "#a855f7", "#ec4899"
+    ];
+
+    private Guid? ActiveMemberFilter
+    {
+        get
+        {
+            if (Session.CurrentUser?.Role != "Admin")
+                return Session.CurrentUser?.GlobalId;
+
+            if (Guid.TryParse(SelectedMemberId, out var g))
+                return g;
+
+            return _showAllMembers ? null : Session.CurrentUser?.GlobalId;
+        }
+    }
+
+    // Computed KPI Metrics
+    private decimal TotalNetBalance => AccountsWithBalances.Sum(a => a.CurrentBalance);
+    private decimal TotalSpentAllAccounts => AccountsWithBalances.Sum(a => a.TotalSpent);
+    private decimal TotalInitialBalance => AccountsWithBalances.Sum(a => a.InitialBalance);
+    private int TotalTransactionsCount => AccountsWithBalances.Sum(a => a.TransactionCount);
+    private int PositiveAccountsCount => AccountsWithBalances.Count(a => a.CurrentBalance >= 0);
+    private int NegativeAccountsCount => AccountsWithBalances.Count(a => a.CurrentBalance < 0);
+
+    // Filtered & Sorted Accounts
+    private IEnumerable<ExpenseService.BankAccountWithBalance> FilteredAccounts
+    {
+        get
+        {
+            var query = AccountsWithBalances.AsEnumerable();
+
+            // Search
+            if (!string.IsNullOrWhiteSpace(SearchText))
+            {
+                var term = SearchText.Trim();
+                query = query.Where(a => a.Account.AccountName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                      || (!string.IsNullOrEmpty(a.Account.BankName) && a.Account.BankName.Contains(term, StringComparison.OrdinalIgnoreCase))
+                                      || (!string.IsNullOrEmpty(a.Account.AccountNumberSuffix) && a.Account.AccountNumberSuffix.Contains(term)));
+            }
+
+            // Type filter
+            switch (ActiveTypeFilter)
+            {
+                case "savings":
+                    query = query.Where(a => string.Equals(a.Account.AccountType, "Savings", StringComparison.OrdinalIgnoreCase));
+                    break;
+                case "credit":
+                    query = query.Where(a => string.Equals(a.Account.AccountType, "Credit Card", StringComparison.OrdinalIgnoreCase));
+                    break;
+                case "negative":
+                    query = query.Where(a => a.CurrentBalance < 0);
+                    break;
+            }
+
+            // Sorting
+            query = SelectedSort switch
+            {
+                "bal_desc" => query.OrderByDescending(a => a.CurrentBalance),
+                "bal_asc" => query.OrderBy(a => a.CurrentBalance),
+                "spent_desc" => query.OrderByDescending(a => a.TotalSpent),
+                _ => query.OrderBy(a => a.Account.AccountName)
+            };
+
+            return query;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
+        _showAllMembers = false;
+        await LoadAccounts();
+    }
+
+    private async Task SetViewMode(bool showAll)
+    {
+        _showAllMembers = showAll;
+        SelectedMemberId = null;
+        await LoadAccounts();
+    }
+
+    private async Task OnMemberFilterChanged()
+    {
+        if (string.IsNullOrEmpty(SelectedMemberId))
+        {
+            _showAllMembers = true;
+        }
+        else if (Guid.TryParse(SelectedMemberId, out var sg) && sg == Session.CurrentUser?.GlobalId)
+        {
+            _showAllMembers = false;
+        }
+        await LoadAccounts();
+    }
+
+    private async Task LoadAccounts()
+    {
+        IsLoading = true;
+        AccountsWithBalances = await ExpenseService.GetBankAccountsWithBalancesAsync(ActiveMemberFilter);
+        IsLoading = false;
+    }
+
+    private void ShowAddForm()
+    {
+        EditingAccount = null;
+        FormName = string.Empty;
+        FormInitialBalance = 0m;
+        FormBankName = string.Empty;
+        FormAccountType = "Savings";
+        FormAccountNumberSuffix = string.Empty;
+        FormColour = "#6366f1";
+        FormIcon = "🏦";
+        FormMemberGlobalId = Session.CurrentUser?.GlobalId ?? Guid.Empty;
+        FormError = null;
+        ShowForm = true;
+    }
+
+    private void StartEdit(BankAccount acc)
+    {
+        EditingAccount = acc;
+        FormName = acc.AccountName;
+        FormInitialBalance = acc.InitialBalance;
+        FormBankName = acc.BankName;
+        FormAccountType = acc.AccountType ?? "Savings";
+        FormAccountNumberSuffix = acc.AccountNumberSuffix;
+        FormColour = acc.Colour ?? "#6366f1";
+        FormIcon = acc.Icon ?? "🏦";
+        FormMemberGlobalId = acc.MemberGlobalId;
+        FormError = null;
+        ShowForm = true;
+    }
+
+    private void HideForm()
+    {
+        ShowForm = false;
+        EditingAccount = null;
+        FormError = null;
+    }
+
+    private async Task SaveAccount()
+    {
+        FormError = null;
+
+        if (string.IsNullOrWhiteSpace(FormName))
+        {
+            FormError = "Account Name is required.";
+            return;
+        }
+
+        IsSaving = true;
+
+        try
+        {
+            var targetMemberId = Session.CurrentUser?.Role == "Admin"
+                ? (FormMemberGlobalId != Guid.Empty ? FormMemberGlobalId : (Session.CurrentUser?.GlobalId ?? Guid.Empty))
+                : (Session.CurrentUser?.GlobalId ?? Guid.Empty);
+
+            if (EditingAccount is null)
+            {
+                await ExpenseService.CreateBankAccountAsync(new BankAccount
+                {
+                    AccountName = FormName.Trim(),
+                    InitialBalance = FormInitialBalance,
+                    BankName = string.IsNullOrWhiteSpace(FormBankName) ? null : FormBankName.Trim(),
+                    AccountType = FormAccountType,
+                    AccountNumberSuffix = string.IsNullOrWhiteSpace(FormAccountNumberSuffix) ? null : FormAccountNumberSuffix.Trim(),
+                    Colour = FormColour,
+                    Icon = FormIcon
+                }, targetMemberId);
+            }
+            else
+            {
+                await ExpenseService.UpdateBankAccountAsync(new BankAccount
+                {
+                    GlobalId = EditingAccount.GlobalId,
+                    AccountName = FormName.Trim(),
+                    InitialBalance = FormInitialBalance,
+                    BankName = string.IsNullOrWhiteSpace(FormBankName) ? null : FormBankName.Trim(),
+                    AccountType = FormAccountType,
+                    AccountNumberSuffix = string.IsNullOrWhiteSpace(FormAccountNumberSuffix) ? null : FormAccountNumberSuffix.Trim(),
+                    Colour = FormColour,
+                    Icon = FormIcon,
+                    MemberGlobalId = targetMemberId
+                });
+            }
+
+            HideForm();
+            await LoadAccounts();
+        }
+        catch (Exception ex)
+        {
+            FormError = $"Failed to save account: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void ConfirmDelete(BankAccount acc) => AccountToDelete = acc;
+    private void CancelDelete() => AccountToDelete = null;
+
+    private async Task DeleteConfirmed()
+    {
+        if (AccountToDelete is not null)
+        {
+            await ExpenseService.DeleteBankAccountAsync(AccountToDelete.GlobalId);
+            AccountToDelete = null;
+            await LoadAccounts();
+        }
+    }
+}

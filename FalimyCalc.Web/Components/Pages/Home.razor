@@ -2,7 +2,9 @@
 @rendermode InteractiveServer
 @using FalimyCalc.Data.Entities
 @using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
 @inject ExpenseService ExpenseService
+@inject UserSessionService Session
 
 <PageTitle>Dashboard — FalimyCalc</PageTitle>
 
@@ -12,12 +14,66 @@
         <h1 class="dash-title">FalimyCalc</h1>
         <p class="dash-subtitle">@_greeting, @DateTime.Now.ToString("dddd, dd MMMM yyyy")</p>
     </div>
-    <div class="dash-header-actions">
-        <a href="/expenses/add" class="btn-primary-glow">
+    <div class="dash-header-actions d-flex align-items-center gap-2 flex-wrap">
+
+        @* Admin view-mode toggle *@
+        @if (Session.CurrentUser?.Role == "Admin")
+        {
+            <div class="view-toggle" title="Toggle between your view and family view">
+                <button class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(false)">
+                    @Session.CurrentUser.Avatar Me
+                </button>
+                <button class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(true)">
+                    👨‍👩‍👧‍👦 Family
+                </button>
+            </div>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="SelectedMemberId" @bind:after="OnMemberFilterChanged">
+                <option value="">All Profiles</option>
+                @foreach (var member in FamilyMembers)
+                {
+                    <option value="@member.GlobalId">@member.Avatar @member.Name</option>
+                }
+            </select>
+        }
+
+        @if (_pendingCount > 0)
+        {
+            <a href="/pending" class="btn btn-warning d-inline-flex align-items-center gap-1 rounded-pill px-3 fw-semibold shadow-sm">
+                <span>📥</span> Review Pending (@_pendingCount)
+            </a>
+        }
+        <a href="/expenses/add?type=income" class="btn btn-outline-success d-inline-flex align-items-center gap-1 shadow-sm">
+            <span>📈</span> <span>Income</span>
+        </a>
+        <a href="/expenses/add?type=transfer" class="btn btn-outline-primary d-inline-flex align-items-center gap-1 shadow-sm">
+            <span>🔁</span> <span>Transfer</span>
+        </a>
+        <a href="/expenses/add?type=expense" class="btn-primary-glow">
             <span class="btn-icon">＋</span> Add Expense
         </a>
     </div>
 </div>
+
+@* View context label *@
+@if (Session.CurrentUser?.Role == "Admin")
+{
+    <div class="view-context-label">
+        @if (!string.IsNullOrEmpty(SelectedMemberId) && Guid.TryParse(SelectedMemberId, out var sg) && MemberMap.TryGetValue(sg, out var sm))
+        {
+            <span>@sm.Avatar Showing transactions for <strong>@sm.Name</strong></span>
+        }
+        else if (_showAllMembers)
+        {
+            <span>👨‍👩‍👧‍👦 Showing <strong>all family</strong> transactions</span>
+        }
+        else
+        {
+            <span>@Session.CurrentUser.Avatar Showing only <strong>your (@Session.CurrentUser.Name)</strong> transactions</span>
+        }
+    </div>
+}
 
 @if (IsLoading)
 {
@@ -44,43 +100,368 @@ else
         </div>
     }
 
-    @* ── KPI Cards ────────────────────────────────────────────────── *@
-    <div class="kpi-grid">
-        <div class="kpi-card kpi-card--primary">
-            <div class="kpi-icon-wrap">💳</div>
-            <div class="kpi-content">
-                <p class="kpi-label">This Month's Spending</p>
-                <h2 class="kpi-value">₹ @MonthlyTotal.ToString("N0")</h2>
-                <p class="kpi-sub">@DateTime.Now.ToString("MMMM yyyy")</p>
+    <!-- ── AI Financial Advice Snapshot Banner ─────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(6, 182, 212, 0.08) 100%); border: 1px solid rgba(99, 102, 241, 0.25) !important; border-radius: 14px;">
+        <div class="card-body p-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-3">
+                <span class="fs-3">✨</span>
+                <div>
+                    <div class="d-flex align-items-center gap-2">
+                        <strong class="text-primary small text-uppercase fw-bold" style="font-size: 0.72rem; letter-spacing: 0.05em;">AI Financial Advisor & Health Analyzer</strong>
+                        <span class="badge rounded-pill bg-primary text-white" style="font-size: 0.65rem;">Smart Diagnostics</span>
+                    </div>
+                    <div class="small fw-semibold mt-1" style="color: var(--dash-text);">
+                        Personalized advice, 50/30/20 budget breakdown, and predictive goal milestones available for your profile.
+                    </div>
+                </div>
             </div>
-            <div class="kpi-glow"></div>
+            <a href="/ai-advisor" class="btn btn-primary btn-sm rounded-pill px-3 fw-semibold shadow-sm d-flex align-items-center gap-1">
+                <span>🤖</span> <span>View Profile Advice →</span>
+            </a>
         </div>
-        <div class="kpi-card kpi-card--info">
-            <div class="kpi-icon-wrap">🧾</div>
-            <div class="kpi-content">
-                <p class="kpi-label">Transactions</p>
-                <h2 class="kpi-value">@RecentExpenses.Count</h2>
-                <p class="kpi-sub">Last 5 recorded</p>
+    </div>
+
+    @* ── Financial Overview KPIs ────────────────────────────────────── *@
+    <div class="row g-3 mb-4">
+        <!-- 1. Net Total Balance -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm kpi-card-financial" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Net Total Balance</span>
+                    <span class="fs-5">🏦</span>
+                </div>
+                <h3 class="mb-1 fw-bold @((_financialSummary?.TotalNetBalance ?? 0) >= 0 ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                    ₹ @(_financialSummary?.TotalNetBalance.ToString("N2") ?? "0.00")
+                </h3>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="badge @((_financialSummary?.TotalNetBalance ?? 0) >= 0 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")" style="font-size: 0.7rem;">
+                        @((_financialSummary?.TotalNetBalance ?? 0) >= 0 ? "✅ Net Positive" : "🚨 Overdrawn")
+                    </span>
+                    <span class="text-muted small" style="font-size: 0.75rem;">
+                        @(_financialSummary?.ActiveAccountsCount ?? 0) active accounts
+                    </span>
+                </div>
             </div>
-            <div class="kpi-glow"></div>
         </div>
-        <div class="kpi-card kpi-card--success">
-            <div class="kpi-icon-wrap">📊</div>
-            <div class="kpi-content">
-                <p class="kpi-label">Daily Average</p>
-                <h2 class="kpi-value">₹ @_dailyAvg.ToString("N0")</h2>
-                <p class="kpi-sub">this month so far</p>
+
+        <!-- 2. Current Month Expense -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm kpi-card-financial" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Current Month Outflow</span>
+                    <span class="fs-5">💸</span>
+                </div>
+                <h3 class="mb-1 fw-bold" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">
+                    ₹ @(_financialSummary?.CurrentMonthExpense.ToString("N2") ?? MonthlyTotal.ToString("N2"))
+                </h3>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted small" style="font-size: 0.75rem;">
+                        Burn: <strong>₹ @(_financialSummary?.DailyBurnRate.ToString("N0") ?? _dailyAvg.ToString("N0"))/day</strong>
+                    </span>
+                    <span class="badge bg-danger-subtle text-danger" style="font-size: 0.7rem;">
+                        Total Spent
+                    </span>
+                </div>
             </div>
-            <div class="kpi-glow"></div>
         </div>
-        <div class="kpi-card kpi-card--accent">
-            <div class="kpi-icon-wrap">🏷️</div>
-            <div class="kpi-content">
-                <p class="kpi-label">Top Category</p>
-                <h2 class="kpi-value kpi-value--sm">@(_topCategory ?? "—")</h2>
-                <p class="kpi-sub">highest spend</p>
+
+        <!-- 3. Current Month Income -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm kpi-card-financial" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Current Month Inflow</span>
+                    <span class="fs-5">📈</span>
+                </div>
+                <h3 class="mb-1 fw-bold text-success" style="font-variant-numeric: tabular-nums;">
+                    ₹ @(_financialSummary?.CurrentMonthIncome.ToString("N2") ?? "0.00")
+                </h3>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted small" style="font-size: 0.75rem;">
+                        Income & Credits
+                    </span>
+                    <span class="badge bg-success-subtle text-success" style="font-size: 0.7rem;">
+                        Deposits
+                    </span>
+                </div>
             </div>
-            <div class="kpi-glow"></div>
+        </div>
+
+        <!-- 4. Net Monthly Cash Flow / Savings -->
+        <div class="col-sm-6 col-xl-3">
+            <div class="card p-3 h-100 border-0 shadow-sm kpi-card-financial" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Net Cash Flow / Savings</span>
+                    <span class="fs-5">💰</span>
+                </div>
+                <h3 class="mb-1 fw-bold @((_financialSummary?.NetMonthlyCashFlow ?? 0) >= 0 ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                    ₹ @(_financialSummary?.NetMonthlyCashFlow.ToString("N2") ?? "0.00")
+                </h3>
+                <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted small" style="font-size: 0.75rem;">
+                        Savings: <strong>@(_financialSummary?.SavingsRate.ToString("F1") ?? "0.0")%</strong>
+                    </span>
+                    <span class="badge @((_financialSummary?.NetMonthlyCashFlow ?? 0) >= 0 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")" style="font-size: 0.7rem;">
+                        @((_financialSummary?.NetMonthlyCashFlow ?? 0) >= 0 ? "Surplus" : "Deficit")
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Balance Amount Line Chart ───────────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">📈</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Balance Trend</h5>
+                    <span class="text-muted small">Daily net available funds across bank accounts</span>
+                </div>
+            </div>
+
+            <!-- Period Switcher & Live Inspector Pill -->
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                @if (_hoveredBalancePoint != null)
+                {
+                    <div class="d-flex align-items-center gap-2 px-3 py-1 rounded-pill animate-in"
+                         style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); font-size: 0.8rem;">
+                        <span class="text-muted">@_hoveredBalancePoint.DateLabel:</span>
+                        <strong class="@(_hoveredBalancePoint.Balance >= 0 ? "text-success" : "text-danger")">
+                            ₹ @_hoveredBalancePoint.Balance.ToString("N2")
+                        </strong>
+                        @if (_hoveredBalancePoint.DailyExpense > 0)
+                        {
+                            <span class="text-danger small ms-1">(-₹@_hoveredBalancePoint.DailyExpense.ToString("N0"))</span>
+                        }
+                    </div>
+                }
+
+                <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn @(_trendDays == DateTime.Now.Day ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SetTrendDays(DateTime.Now.Day)">
+                        📅 This Month
+                    </button>
+                    <button type="button" class="btn @(_trendDays == 30 ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SetTrendDays(30)">
+                        🗓️ Last 30 Days
+                    </button>
+                    <button type="button" class="btn @(_trendDays == 60 ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SetTrendDays(60)">
+                        60 Days
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-body p-3">
+            @if (_financialSummary == null || !_financialSummary.BalanceHistory.Any())
+            {
+                <div class="text-center py-5 text-muted">
+                    <span class="fs-1 d-block mb-2">📊</span>
+                    <p class="mb-0">No balance history recorded yet. Configure your bank accounts to see the live trend.</p>
+                </div>
+            }
+            else
+            {
+                var (linePath, areaPath, points, minBal, maxBal, zeroY) = ComputeSvgChart();
+
+                <!-- High/Low KPI ribbon -->
+                <div class="row g-2 text-center mb-3">
+                    <div class="col-6 col-md-3">
+                        <div class="p-2 rounded-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <span class="text-muted small d-block" style="font-size: 0.72rem;">STARTING BALANCE</span>
+                            <span class="fw-bold small" style="color: var(--dash-text);">
+                                ₹ @(_financialSummary.BalanceHistory.First().Balance.ToString("N2"))
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-2 rounded-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <span class="text-muted small d-block" style="font-size: 0.72rem;">CURRENT BALANCE</span>
+                            <span class="fw-bold small @(_financialSummary.TotalNetBalance >= 0 ? "text-success" : "text-danger")">
+                                ₹ @(_financialSummary.TotalNetBalance.ToString("N2"))
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-2 rounded-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <span class="text-muted small d-block" style="font-size: 0.72rem;">PEAK BALANCE</span>
+                            <span class="fw-bold small text-success">
+                                ₹ @maxBal.ToString("N2")
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-2 rounded-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <span class="text-muted small d-block" style="font-size: 0.72rem;">LOWEST BALANCE</span>
+                            <span class="fw-bold small @(minBal < 0 ? "text-danger" : "text-muted")">
+                                ₹ @minBal.ToString("N2")
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SVG Line Chart Canvas -->
+                <div class="position-relative w-100 overflow-hidden" style="min-height: 200px;">
+                    <svg viewBox="0 0 650 200" preserveAspectRatio="none" style="width: 100%; height: 210px; display: block;">
+                        <defs>
+                            <linearGradient id="balanceAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="var(--c-indigo, #6366f1)" stop-opacity="0.32" />
+                                <stop offset="100%" stop-color="var(--c-indigo, #6366f1)" stop-opacity="0.0" />
+                            </linearGradient>
+                        </defs>
+
+                        <!-- Background horizontal grid lines -->
+                        <line x1="65" y1="20" x2="630" y2="20" stroke="var(--dash-border)" stroke-dasharray="3,3" stroke-width="1" />
+                        <line x1="65" y1="92" x2="630" y2="92" stroke="var(--dash-border)" stroke-dasharray="3,3" stroke-width="1" />
+                        <line x1="65" y1="165" x2="630" y2="165" stroke="var(--dash-border)" stroke-width="1" />
+
+                        <!-- Zero reference line if within bounds -->
+                        @if (zeroY >= 20 && zeroY <= 165)
+                        {
+                            <line x1="65" y1="@zeroY.ToString("F1")" x2="630" y2="@zeroY.ToString("F1")" stroke="var(--c-rose, #f43f5e)" stroke-dasharray="4,4" stroke-width="1.2" />
+                            @((MarkupString)$"<text x=\"58\" y=\"{(zeroY + 3):F1}\" text-anchor=\"end\" fill=\"var(--c-rose, #f43f5e)\" font-size=\"9\" font-weight=\"600\">₹0</text>")
+                        }
+
+                        <!-- Y-axis Labels -->
+                        <text x="58" y="24" text-anchor="end" fill="var(--dash-text-muted)" font-size="10" font-family="var(--font-main)">₹@FormatK(maxBal)</text>
+                        <text x="58" y="96" text-anchor="end" fill="var(--dash-text-muted)" font-size="10" font-family="var(--font-main)">₹@FormatK((maxBal + minBal) / 2m)</text>
+                        <text x="58" y="168" text-anchor="end" fill="var(--dash-text-muted)" font-size="10" font-family="var(--font-main)">₹@FormatK(minBal)</text>
+
+                        <!-- Area Fill -->
+                        @if (!string.IsNullOrEmpty(areaPath))
+                        {
+                            <path d="@areaPath" fill="url(#balanceAreaGrad)" />
+                        }
+
+                        <!-- The Balance Line -->
+                        @if (!string.IsNullOrEmpty(linePath))
+                        {
+                            <path d="@linePath" fill="none" stroke="var(--c-indigo, #6366f1)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                        }
+
+                        <!-- Data Points with hover and click -->
+                        @foreach (var p in points)
+                        {
+                            var isSelected = _hoveredBalancePoint != null && _hoveredBalancePoint.Date.Date == p.pt.Date.Date;
+                            <circle cx="@p.x.ToString("F1")"
+                                    cy="@p.y.ToString("F1")"
+                                    r="@(isSelected ? "6" : "3.5")"
+                                    fill="@(isSelected ? "var(--c-indigo, #6366f1)" : "var(--dash-surface)")"
+                                    stroke="var(--c-indigo, #6366f1)"
+                                    stroke-width="@(isSelected ? "3" : "2")"
+                                    style="cursor: pointer; transition: all 0.15s ease;"
+                                    @onmouseover="() => _hoveredBalancePoint = p.pt"
+                                    @onclick="() => _hoveredBalancePoint = p.pt">
+                                <title>@p.pt.DateLabel: Balance ₹@p.pt.Balance.ToString("N2") @(p.pt.DailyExpense > 0 ? $"(-₹{p.pt.DailyExpense:N0})" : "")</title>
+                            </circle>
+                        }
+
+                        <!-- X-axis Date Labels (Sampled evenly) -->
+                        @{
+                            int sampleStep = Math.Max(1, (points.Count - 1) / 5);
+                            var sampledIndices = new HashSet<int>();
+                            for (int i = 0; i < points.Count; i += sampleStep)
+                            {
+                                sampledIndices.Add(i);
+                            }
+                            sampledIndices.Add(points.Count - 1); // Always include the last day
+                        }
+                        @foreach (var idx in sampledIndices.OrderBy(i => i))
+                        {
+                            if (idx < points.Count)
+                            {
+                                var pt = points[idx];
+                                @((MarkupString)$"<text x=\"{pt.x:F1}\" y=\"190\" text-anchor=\"middle\" fill=\"var(--dash-text-muted)\" font-size=\"10\" font-family=\"var(--font-main)\">{pt.pt.DateLabel}</text>")
+                            }
+                        }
+                    </svg>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ── Current Month Expense & Income Cash Flow Timeline ──────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">⏱️</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Current Month Cash Flow & Timeline</h5>
+                    <span class="small text-muted">@DateTime.Now.ToString("MMMM yyyy") cash flow progression and burn rate</span>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-secondary-subtle text-secondary small">
+                    Day @(_financialSummary?.DaysElapsed ?? 1) of @(_financialSummary?.DaysInMonth ?? 30) (@((int)Math.Round((double)(_financialSummary?.DaysElapsed ?? 1) / (_financialSummary?.DaysInMonth ?? 30) * 100))%)
+                </span>
+            </div>
+        </div>
+        <div class="card-body p-3">
+            <div class="row g-3 align-items-center">
+                <!-- Visual Inflow vs Outflow Progress -->
+                <div class="col-lg-7">
+                    <div class="d-flex justify-content-between align-items-center mb-1 small">
+                        <span class="fw-semibold text-success">
+                            📈 Income: ₹@(_financialSummary?.CurrentMonthIncome.ToString("N2") ?? "0.00")
+                        </span>
+                        <span class="fw-semibold" style="color: var(--c-rose, #f43f5e);">
+                            💸 Expenses: ₹@(_financialSummary?.CurrentMonthExpense.ToString("N2") ?? "0.00")
+                        </span>
+                    </div>
+
+                    <!-- Comparative Progress Bar -->
+                    @{
+                        var incomeVal = (double)(_financialSummary?.CurrentMonthIncome ?? 0m);
+                        var expenseVal = (double)(_financialSummary?.CurrentMonthExpense ?? 0m);
+                        var maxFlow = Math.Max(incomeVal, Math.Max(expenseVal, 1.0));
+                        var expPct = (int)Math.Min(100, Math.Round((expenseVal / maxFlow) * 100));
+                        var incPct = (int)Math.Min(100, Math.Round((incomeVal / maxFlow) * 100));
+                    }
+                    <div class="progress mb-2" style="height: 12px; border-radius: 6px; background: var(--dash-surface-raised);">
+                        @if (incomeVal > 0)
+                        {
+                            <div class="progress-bar bg-success" style="width: @incPct%;" title="Income: ₹@incomeVal.ToString("N2")"></div>
+                        }
+                    </div>
+                    <div class="progress mb-3" style="height: 12px; border-radius: 6px; background: var(--dash-surface-raised);">
+                        <div class="progress-bar bg-danger" style="width: @expPct%; background-color: var(--c-rose, #f43f5e) !important;" title="Expenses: ₹@expenseVal.ToString("N2")"></div>
+                    </div>
+
+                    <!-- Month Timeline Elapsed Bar -->
+                    @{
+                        var elapsedPct = (int)Math.Round((double)(_financialSummary?.DaysElapsed ?? 1) / (_financialSummary?.DaysInMonth ?? 30) * 100);
+                        var remainingDays = (_financialSummary?.DaysInMonth ?? 30) - (_financialSummary?.DaysElapsed ?? 1);
+                    }
+                    <div class="d-flex justify-content-between align-items-center mb-1 small text-muted">
+                        <span>Month Timeline Progress</span>
+                        <span>@elapsedPct% elapsed (@remainingDays day@(remainingDays == 1 ? "" : "s") remaining)</span>
+                    </div>
+                    <div class="progress" style="height: 6px; border-radius: 3px; background: var(--dash-surface-raised);">
+                        <div class="progress-bar bg-primary" style="width: @elapsedPct%;"></div>
+                    </div>
+                </div>
+
+                <!-- Stats Summary Columns -->
+                <div class="col-lg-5">
+                    <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                        <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                            <span class="small text-muted">Daily Burn Rate:</span>
+                            <strong style="color: var(--dash-text);">₹ @(_financialSummary?.DailyBurnRate.ToString("N0") ?? "0") / day</strong>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                            <span class="small text-muted">Projected Month-End Spend:</span>
+                            <strong style="color: var(--c-rose, #f43f5e);">₹ @(_financialSummary?.ProjectedMonthEndSpend.ToString("N0") ?? "0")</strong>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="small text-muted">Net Cash Flow:</span>
+                            <span class="fw-bold @((_financialSummary?.NetMonthlyCashFlow ?? 0) >= 0 ? "text-success" : "text-danger")">
+                                @((_financialSummary?.NetMonthlyCashFlow ?? 0) >= 0 ? "+ " : "- ")₹ @(Math.Abs(_financialSummary?.NetMonthlyCashFlow ?? 0m).ToString("N2"))
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -177,6 +558,348 @@ else
         </div>
     </div>
 
+    <!-- ── Financial Goals & Sinking Funds Tile ─────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">🎯</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Financial Goals & Sinking Funds</h5>
+                    <span class="small text-muted">Savings targets, emergency reserves, and major purchases</span>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <a href="/goals" class="btn btn-outline-primary btn-sm rounded-pill px-3">
+                    View All Goals (@_goalsSummary.TotalGoals) →
+                </a>
+            </div>
+        </div>
+
+        <div class="card-body p-3">
+            @if (!_goalsSummary.TopGoals.Any())
+            {
+                <div class="p-3 text-center rounded-3" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border);">
+                    <span class="fs-2 mb-1 d-block">🛡️</span>
+                    <h6 class="fw-bold mb-1" style="color: var(--dash-text);">Start an Emergency or Sinking Fund</h6>
+                    <p class="text-muted small mb-2" style="max-width: 480px; margin: 0 auto;">
+                        Set aside money for emergencies, holiday trips, vehicle repairs, or gadgets without impacting your monthly budget.
+                    </p>
+                    <a href="/goals" class="btn btn-primary btn-sm">
+                        ➕ Set Up a Savings Goal
+                    </a>
+                </div>
+            }
+            else
+            {
+                <!-- Overall Funds Progress Bar -->
+                <div class="row g-3 align-items-center mb-3 p-2 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                    <div class="col-md-7">
+                        <div class="d-flex justify-content-between align-items-center mb-1 small">
+                            <span class="fw-semibold" style="color: var(--dash-text);">Total Funds Saved</span>
+                            <span class="text-success fw-bold">₹ @_goalsSummary.TotalSaved.ToString("N2") <span class="text-muted fw-normal">of ₹ @_goalsSummary.TotalTarget.ToString("N0")</span></span>
+                        </div>
+                        <div class="progress" style="height: 8px; border-radius: 4px; background: rgba(0,0,0,0.08);">
+                            <div class="progress-bar bg-success" style="width: @Math.Min(_goalsSummary.OverallProgressPct, 100.0)%;"></div>
+                        </div>
+                    </div>
+                    <div class="col-md-5 d-flex justify-content-md-end align-items-center gap-2">
+                        <span class="badge bg-success-subtle text-success small px-2 py-1">
+                            @_goalsSummary.OverallProgressPct.ToString("F1")% Overall Achieved
+                        </span>
+                        <span class="badge bg-primary-subtle text-primary small px-2 py-1">
+                            @_goalsSummary.CompletedGoals of @_goalsSummary.TotalGoals Completed
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Goals Cards Carousel/Grid -->
+                <div class="row g-3">
+                    @foreach (var goal in _goalsSummary.TopGoals)
+                    {
+                        var pct = goal.TargetAmount > 0 ? Math.Min(100.0, (double)(goal.CurrentAmount / goal.TargetAmount * 100m)) : 0.0;
+                        var col = string.IsNullOrWhiteSpace(goal.Colour) ? "#6366f1" : goal.Colour;
+                        var isDone = goal.Status == "Completed" || goal.CurrentAmount >= goal.TargetAmount;
+
+                        <div class="col-md-6 col-xl-3">
+                            <div class="p-3 rounded-3 h-100 d-flex flex-column justify-content-between" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid @col;">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="fs-5">@(goal.Icon ?? "🎯")</span>
+                                            <strong class="small text-truncate" style="max-width: 130px; color: var(--dash-text);" title="@goal.Name">
+                                                @goal.Name
+                                            </strong>
+                                        </div>
+                                        <span class="badge @(isDone ? "bg-success-subtle text-success" : "bg-secondary-subtle text-secondary")" style="font-size: 0.65rem;">
+                                            @(isDone ? "🎉 Done" : $"{pct:F0}%")
+                                        </span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline mb-1">
+                                        <span class="fw-bold fs-6 text-success" style="font-variant-numeric: tabular-nums;">
+                                            ₹ @goal.CurrentAmount.ToString("N0")
+                                        </span>
+                                        <span class="text-muted small" style="font-size: 0.75rem;">
+                                            of ₹ @goal.TargetAmount.ToString("N0")
+                                        </span>
+                                    </div>
+                                    <div class="progress mb-2" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                        <div class="progress-bar" style="width: @pct%; background-color: @col;"></div>
+                                    </div>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center pt-2 border-top small" style="border-color: var(--dash-border) !important; font-size: 0.72rem;">
+                                    <span class="text-muted">
+                                        @(isDone ? "Target Achieved!" : $"₹{Math.Max(0, goal.TargetAmount - goal.CurrentAmount):N0} left")
+                                    </span>
+                                    <a href="/goals" class="text-decoration-none fw-semibold" style="color: @col;">
+                                        Manage →
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ── Recurring Subscriptions & Fixed Bills Tile ───────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">🔁</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Recurring Bills & Subscriptions</h5>
+                    <span class="small text-muted">Fixed monthly commitments, memberships, utilities, and renewals</span>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                @if (_recurringSummary.OverdueCount > 0)
+                {
+                    <span class="badge bg-danger-subtle text-danger px-2 py-1">
+                        ⏰ @_recurringSummary.OverdueCount Overdue (₹@_recurringSummary.OverdueAmount.ToString("N0"))
+                    </span>
+                }
+                @if (_recurringSummary.DueNext7DaysCount > 0)
+                {
+                    <span class="badge bg-warning-subtle text-warning px-2 py-1">
+                        ⚠️ @_recurringSummary.DueNext7DaysCount Due in 7 Days (₹@_recurringSummary.DueNext7DaysAmount.ToString("N0"))
+                    </span>
+                }
+                <a href="/subscriptions" class="btn btn-outline-primary btn-sm rounded-pill px-3">
+                    Manage All (@_recurringSummary.TotalCount) →
+                </a>
+            </div>
+        </div>
+
+        <div class="card-body p-3">
+            @if (!_recurringSummary.UpcomingItems.Any())
+            {
+                <div class="p-3 text-center rounded-3" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border);">
+                    <span class="fs-2 mb-1 d-block">📱</span>
+                    <h6 class="fw-bold mb-1" style="color: var(--dash-text);">Track Your Subscriptions & Fixed Bills</h6>
+                    <p class="text-muted small mb-2" style="max-width: 480px; margin: 0 auto;">
+                        Keep track of Netflix, Spotify, gym memberships, electricity bills, EMI, and rent with due date reminders and burn rate analytics.
+                    </p>
+                    <a href="/subscriptions" class="btn btn-primary btn-sm">
+                        ➕ Add First Subscription
+                    </a>
+                </div>
+            }
+            else
+            {
+                <!-- Summary Metrics Bar -->
+                <div class="row g-3 align-items-center mb-3 p-2 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                    <div class="col-sm-6 col-md-3">
+                        <span class="text-muted small d-block" style="font-size: 0.72rem;">MONTHLY BURN RATE</span>
+                        <span class="fw-bold text-danger">₹ @_recurringSummary.MonthlyEquivalentExpense.ToString("N2")/mo</span>
+                    </div>
+                    <div class="col-sm-6 col-md-3">
+                        <span class="text-muted small d-block" style="font-size: 0.72rem;">ANNUAL RUN-RATE</span>
+                        <span class="fw-bold" style="color: var(--c-purple, #8b5cf6);">₹ @_recurringSummary.AnnualProjectedExpense.ToString("N0")/yr</span>
+                    </div>
+                    <div class="col-sm-6 col-md-3">
+                        <span class="text-muted small d-block" style="font-size: 0.72rem;">ACTIVE SUBSCRIPTIONS</span>
+                        <span class="fw-bold text-success">@_recurringSummary.ActiveCount Active</span>
+                    </div>
+                    <div class="col-sm-6 col-md-3 text-md-end">
+                        <a href="/subscriptions" class="btn btn-sm btn-primary rounded-pill px-3">
+                            Open Manager ⚡
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Upcoming Bills Cards -->
+                <div class="row g-3">
+                    @foreach (var sub in _recurringSummary.UpcomingItems.Take(4))
+                    {
+                        var isOverdue = sub.NextDueDate.Date < DateTime.Today;
+                        var isDueSoon = !isOverdue && sub.NextDueDate.Date <= DateTime.Today.AddDays(7);
+                        var badgeClass = isOverdue ? "bg-danger-subtle text-danger" : isDueSoon ? "bg-warning-subtle text-warning" : "bg-secondary-subtle text-secondary";
+                        var badgeText = isOverdue ? $"Overdue by {(DateTime.Today - sub.NextDueDate.Date).Days}d" : isDueSoon ? (sub.NextDueDate.Date == DateTime.Today ? "Due Today" : $"Due in {(sub.NextDueDate.Date - DateTime.Today).Days}d") : sub.NextDueDate.ToString("dd MMM yyyy");
+
+                        <div class="col-md-6 col-xl-3">
+                            <div class="p-3 rounded-3 h-100 d-flex flex-column justify-content-between" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid @(string.IsNullOrEmpty(sub.Colour) ? "#6366f1" : sub.Colour);">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="fs-5">@(sub.Icon ?? "🔁")</span>
+                                            <strong class="small text-truncate" style="max-width: 130px; color: var(--dash-text);" title="@sub.Name">
+                                                @sub.Name
+                                            </strong>
+                                        </div>
+                                        <span class="badge @badgeClass" style="font-size: 0.65rem;">
+                                            @badgeText
+                                        </span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline mb-1">
+                                        <span class="fw-bold fs-6 @(sub.Type == "Income" ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                                            @(sub.Type == "Income" ? "+" : "-") ₹ @sub.Amount.ToString("N2")
+                                        </span>
+                                        <span class="text-muted small" style="font-size: 0.72rem;">
+                                            @sub.Frequency
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center pt-2 border-top small" style="border-color: var(--dash-border) !important; font-size: 0.72rem;">
+                                    <span class="text-muted text-truncate" style="max-width: 140px;">
+                                        @(sub.BankAccount?.AccountName ?? "No account")
+                                    </span>
+                                    <a href="/subscriptions" class="text-decoration-none fw-semibold" style="color: #6366f1;">
+                                        Review →
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ── Loans & EMI Debt Schedule Tile ──────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+        <div class="card-header bg-transparent py-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border-bottom" style="border-color: var(--dash-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-5">💳</span>
+                <div>
+                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text);">Loans & Active EMIs</h5>
+                    <span class="small text-muted">Outstanding borrowings, monthly installments, and payoff progress</span>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                @if (_loansSummary.OverdueCount > 0)
+                {
+                    <span class="badge bg-danger text-white px-2 py-1">
+                        🚨 @_loansSummary.OverdueCount Overdue (₹@_loansSummary.OverdueAmount.ToString("N0"))
+                    </span>
+                }
+                @if (_loansSummary.DueNext7DaysCount > 0)
+                {
+                    <span class="badge bg-warning text-dark px-2 py-1">
+                        ⏳ @_loansSummary.DueNext7DaysCount Due Soon (₹@_loansSummary.DueNext7DaysAmount.ToString("N0"))
+                    </span>
+                }
+                <a href="/loans" class="btn btn-outline-primary btn-sm rounded-pill px-3">
+                    View All Loans (@_loansSummary.TotalLoansCount) →
+                </a>
+            </div>
+        </div>
+
+        <div class="card-body p-3">
+            @if (!_loansSummary.UpcomingEmis.Any())
+            {
+                <div class="p-3 text-center rounded-3" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border);">
+                    <span class="fs-2 mb-1 d-block">🎉</span>
+                    <h6 class="fw-bold mb-1 text-success">Zero Active Loan Debt!</h6>
+                    <p class="text-muted small mb-2" style="max-width: 480px; margin: 0 auto;">
+                        No active loans or EMIs recorded. Add your home loan, car loan, or electronics EMIs to track payoff timelines.
+                    </p>
+                    <a href="/loans" class="btn btn-primary btn-sm">
+                        ➕ Add Loan / EMI
+                    </a>
+                </div>
+            }
+            else
+            {
+                <!-- Debt Summary Metrics -->
+                <div class="row g-3 align-items-center mb-3 p-2 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                    <div class="col-sm-6 col-md-3">
+                        <span class="text-muted small d-block" style="font-size: 0.72rem;">OUTSTANDING PRINCIPAL</span>
+                        <span class="fw-bold text-danger">₹ @_loansSummary.TotalOutstandingPrincipal.ToString("N0")</span>
+                    </div>
+                    <div class="col-sm-6 col-md-3">
+                        <span class="text-muted small d-block" style="font-size: 0.72rem;">TOTAL MONTHLY EMI</span>
+                        <span class="fw-bold" style="color: var(--dash-text);">₹ @_loansSummary.TotalMonthlyEmi.ToString("N2")/mo</span>
+                    </div>
+                    <div class="col-sm-6 col-md-3">
+                        <span class="text-muted small d-block" style="font-size: 0.72rem;">PAYOFF PROGRESS</span>
+                        <span class="fw-bold text-success">@_loansSummary.OverallRepaidPct.ToString("F1")% Repaid</span>
+                    </div>
+                    <div class="col-sm-6 col-md-3 text-md-end">
+                        <a href="/loans" class="btn btn-sm btn-primary rounded-pill px-3">
+                            Manage Loans ⚡
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Active Loans Cards -->
+                <div class="row g-3">
+                    @foreach (var loan in _loansSummary.UpcomingEmis.Take(4))
+                    {
+                        var isOverdue = loan.NextDueDate.Date < DateTime.Today;
+                        var isDueSoon = !isOverdue && loan.NextDueDate.Date <= DateTime.Today.AddDays(7);
+                        var badgeClass = isOverdue ? "bg-danger text-white" : isDueSoon ? "bg-warning text-dark" : "bg-secondary-subtle text-secondary";
+                        var badgeText = isOverdue ? $"Overdue {(DateTime.Today - loan.NextDueDate.Date).Days}d" : isDueSoon ? (loan.NextDueDate.Date == DateTime.Today ? "Due Today" : $"Due in {(loan.NextDueDate.Date - DateTime.Today).Days}d") : loan.NextDueDate.ToString("dd MMM");
+
+                        double paidPct = loan.PrincipalAmount > 0
+                            ? Math.Min(100.0, (double)((loan.PrincipalAmount - loan.OutstandingBalance) / loan.PrincipalAmount * 100m))
+                            : 0;
+
+                        <div class="col-md-6 col-xl-3">
+                            <div class="p-3 rounded-3 h-100 d-flex flex-column justify-content-between" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border); border-top: 3px solid @(string.IsNullOrEmpty(loan.Colour) ? "#f43f5e" : loan.Colour);">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="fs-5">@(loan.Icon ?? "💳")</span>
+                                            <div>
+                                                <strong class="small text-truncate d-block" style="max-width: 120px; color: var(--dash-text);" title="@loan.Name">
+                                                    @loan.Name
+                                                </strong>
+                                                <span class="text-muted small" style="font-size: 0.7rem;">@loan.LoanType</span>
+                                            </div>
+                                        </div>
+                                        <span class="badge @badgeClass" style="font-size: 0.65rem;">
+                                            @badgeText
+                                        </span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline mb-1">
+                                        <span class="fw-bold fs-6 text-danger" style="font-variant-numeric: tabular-nums;">
+                                            ₹ @loan.EmiAmount.ToString("N0")<span class="fs-7 fw-normal text-muted">/mo</span>
+                                        </span>
+                                        <span class="text-muted small" style="font-size: 0.72rem;">
+                                            @loan.EmisPaid / @loan.TenureMonths EMIs
+                                        </span>
+                                    </div>
+                                    <div class="progress mb-2" style="height: 5px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                        <div class="progress-bar bg-success" style="width: @paidPct%;"></div>
+                                    </div>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center pt-2 border-top small" style="border-color: var(--dash-border) !important; font-size: 0.72rem;">
+                                    <span class="text-muted">
+                                        Bal: <strong>₹@loan.OutstandingBalance.ToString("N0")</strong>
+                                    </span>
+                                    <a href="/loans" class="text-decoration-none fw-semibold" style="color: #6366f1;">
+                                        Pay EMI →
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
     @* ── Bottom Row: Recent + Quick Actions ───────────────────────── *@
     <div class="bottom-grid">
 
@@ -196,21 +919,52 @@ else
                     @foreach (var exp in RecentExpenses)
                     {
                         <li class="tx-item">
-                            <div class="tx-icon">@(exp.Category?.Icon ?? "💰")</div>
+                            <div class="tx-icon">
+                                @(ExpenseService.IsTransferTransaction(exp) ? "🔁" : (ExpenseService.IsIncomeTransaction(exp) ? "📈" : (exp.Category?.Icon ?? "💰")))
+                            </div>
                             <div class="tx-details">
                                 <span class="tx-name">@exp.Description</span>
                                 <span class="tx-meta">
                                     @exp.TransactionDate.ToString("dd MMM")
-                                    @if (exp.Category != null)
+                                    @if (ExpenseService.IsTransferTransaction(exp))
+                                    {
+                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.7rem;">
+                                            🔁 Transfer
+                                        </span>
+                                    }
+                                    else if (ExpenseService.IsIncomeTransaction(exp))
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 0.7rem;">
+                                            📈 Income
+                                        </span>
+                                    }
+                                    else if (exp.Category != null)
                                     {
                                         <span class="tx-cat-pill"
                                               style="background:@(exp.Category.Colour ?? "#6366f1")20;color:@(exp.Category.Colour ?? "#6366f1")">
                                             @exp.Category.Name
                                         </span>
                                     }
+                                    @if (Session.CurrentUser?.Role == "Admin" && exp.MemberGlobalId.HasValue && MemberMap.TryGetValue(exp.MemberGlobalId.Value, out var mem))
+                                    {
+                                        <span class="member-badge ms-1" style="background-color: @(mem.Colour ?? "#4f46e5"); font-size: 0.65rem;">
+                                            @mem.Avatar @mem.Name
+                                        </span>
+                                    }
                                 </span>
                             </div>
-                            <span class="tx-amount">₹ @exp.Amount.ToString("N2")</span>
+                            @if (ExpenseService.IsIncomeTransaction(exp))
+                            {
+                                <span class="tx-amount text-success fw-bold" style="font-variant-numeric: tabular-nums;">+ ₹ @Math.Abs(exp.Amount).ToString("N2")</span>
+                            }
+                            else if (ExpenseService.IsTransferTransaction(exp))
+                            {
+                                <span class="tx-amount text-primary fw-bold" style="font-variant-numeric: tabular-nums;">🔁 ₹ @Math.Abs(exp.Amount).ToString("N2")</span>
+                            }
+                            else
+                            {
+                                <span class="tx-amount" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">- ₹ @Math.Abs(exp.Amount).ToString("N2")</span>
+                            }
                         </li>
                     }
                 </ul>
@@ -224,10 +978,15 @@ else
                     <span class="chart-card-title">Quick Actions</span>
                 </div>
                 <div class="quick-actions">
-                    <a href="/expenses/add" class="qa-btn qa-btn--blue"><span>💳</span><span>Add Expense</span></a>
-                    <a href="/expenses"     class="qa-btn qa-btn--purple"><span>📋</span><span>All Expenses</span></a>
-                    <a href="/categories"   class="qa-btn qa-btn--teal"><span>🏷️</span><span>Categories</span></a>
-                    <a href="/reports"      class="qa-btn qa-btn--amber"><span>📊</span><span>Reports</span></a>
+                    <a href="/ai-advisor" class="qa-btn qa-btn--purple"><span>✨</span><span>AI Advisor</span></a>
+                    <a href="/loans" class="qa-btn qa-btn--rose"><span>💳</span><span>Loans & EMI</span></a>
+                    <a href="/expenses/add?type=expense" class="qa-btn qa-btn--blue"><span>💳</span><span>Add Expense</span></a>
+                    <a href="/expenses/add?type=income" class="qa-btn qa-btn--teal"><span>📈</span><span>Add Income</span></a>
+                    <a href="/expenses/add?type=transfer" class="qa-btn qa-btn--purple"><span>🔁</span><span>Transfer</span></a>
+                    <a href="/subscriptions" class="qa-btn qa-btn--amber"><span>🔁</span><span>Subscriptions</span></a>
+                    <a href="/goals" class="qa-btn qa-btn--teal"><span>🎯</span><span>Goals & Funds</span></a>
+                    <a href="/accounts" class="qa-btn qa-btn--amber"><span>🏦</span><span>Accounts</span></a>
+                    <a href="/reports" class="qa-btn qa-btn--blue"><span>📊</span><span>Reports</span></a>
                 </div>
             </div>
             <div class="chart-card top-cats-card">
@@ -258,6 +1017,44 @@ else
                     }
                 }
             </div>
+
+            <div class="chart-card budgets-card">
+                <div class="chart-card-header">
+                    <span class="chart-card-title">Category Budgets</span>
+                    <a href="/categories" class="view-all-link">Manage →</a>
+                </div>
+                @if (!_budgetStatuses.Any(b => b.Budget.HasValue && b.Budget > 0))
+                {
+                    <div class="chart-empty py-2">
+                        <span class="small text-muted d-block mb-2">No category budgets configured</span>
+                        <a href="/categories" class="btn btn-sm btn-outline-primary py-0 px-2 fs-7">+ Set Budgets</a>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var b in _budgetStatuses.Where(b => b.Budget.HasValue && b.Budget > 0).Take(4))
+                    {
+                        var barColor = b.IsOverBudget ? "var(--c-rose)" : b.IsNearLimit ? "var(--c-amber)" : "var(--c-emerald)";
+                        <div class="top-cat-row mb-2">
+                            <span class="top-cat-name" title="@b.CategoryName">@b.Icon @b.CategoryName</span>
+                            <div class="top-cat-bar-track">
+                                <div class="top-cat-bar"
+                                     style="width: @Math.Min(b.PercentUsed, 100)%; background: @barColor;"></div>
+                            </div>
+                            <span class="top-cat-amount small" style="color: @barColor; font-size: 0.72rem; width: 65px;">
+                                @if (b.IsOverBudget)
+                                {
+                                    <span>Over!</span>
+                                }
+                                else
+                                {
+                                    <span>@b.PercentUsed%</span>
+                                }
+                            </span>
+                        </div>
+                    }
+                }
+            </div>
         </div>
     </div>
 }
@@ -267,45 +1064,229 @@ else
     private decimal MonthlyTotal;
     private Dictionary<string, decimal> CategoryTotals = [];
     private List<Expense> RecentExpenses = [];
+    private List<FamilyMember> FamilyMembers = [];
+    private Dictionary<Guid, FamilyMember> MemberMap = [];
     private decimal _dailyAvg;
     private string? _topCategory;
     private string _greeting = "Good morning";
     private List<ExpenseService.MonthlyTrendItem> _trends = [];
+    private List<ExpenseService.CategoryBudgetStatus> _budgetStatuses = [];
     private List<DashAlert> _spendingAlerts = [];
+    private int _pendingCount = 0;
+    private bool _showAllMembers = false; // Admin default: show their own account
+    private string? SelectedMemberId;
+
+    private ExpenseService.FinancialKpiSummary? _financialSummary;
+    private int _trendDays = 30;
+    private ExpenseService.BalanceTrendPoint? _hoveredBalancePoint;
+    private ExpenseService.GoalsSummary _goalsSummary = new(0, 0, 0, 0, 0, 0, []);
+    private ExpenseService.RecurringSummary _recurringSummary = new(0, 0, 0, 0, 0, 0, 0, 0, 0, []);
+    private ExpenseService.LoansSummary _loansSummary = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, []);
 
     private string[] _palette = ["#6366f1","#22d3ee","#f59e0b","#10b981","#f43f5e","#8b5cf6","#06b6d4","#84cc16"];
+
+    // Returns the member filter to apply: null = all, Guid = specific member
+    private Guid? ActiveMemberFilter
+    {
+        get
+        {
+            if (Session.CurrentUser?.Role != "Admin")
+                return Session.CurrentUser?.GlobalId;
+
+            if (Guid.TryParse(SelectedMemberId, out var g))
+                return g;
+
+            return _showAllMembers ? null : Session.CurrentUser?.GlobalId;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
         var hour = DateTime.Now.Hour;
         _greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-        var now = DateTime.Now;
-        MonthlyTotal = await ExpenseService.GetMonthlyTotalAsync(now.Year, now.Month);
-        CategoryTotals = await ExpenseService.GetMonthlyTotalsByCategoryAsync(now.Year, now.Month);
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
+        MemberMap = FamilyMembers.ToDictionary(m => m.GlobalId);
+        _showAllMembers = false;
 
-        var (items, _) = await ExpenseService.GetExpensesAsync(page: 1, pageSize: 5);
+        await LoadDashboardAsync();
+    }
+
+    private async Task SetViewMode(bool showAll)
+    {
+        _showAllMembers = showAll;
+        SelectedMemberId = null;
+        IsLoading = true;
+        StateHasChanged();
+        await LoadDashboardAsync();
+    }
+
+    private async Task OnMemberFilterChanged()
+    {
+        if (string.IsNullOrEmpty(SelectedMemberId))
+        {
+            _showAllMembers = true;
+        }
+        else if (Guid.TryParse(SelectedMemberId, out var sg) && sg == Session.CurrentUser?.GlobalId)
+        {
+            _showAllMembers = false;
+        }
+        IsLoading = true;
+        StateHasChanged();
+        await LoadDashboardAsync();
+    }
+
+    private async Task LoadDashboardAsync()
+    {
+        var filter = ActiveMemberFilter;
+        var now = DateTime.Now;
+
+        MonthlyTotal = await ExpenseService.GetMonthlyTotalAsync(now.Year, now.Month, filter);
+        CategoryTotals = await ExpenseService.GetMonthlyTotalsByCategoryAsync(now.Year, now.Month, filter);
+
+        var (items, _, _) = await ExpenseService.GetExpensesAsync(page: 1, pageSize: 5, memberGlobalId: filter);
         RecentExpenses = items;
 
         _dailyAvg = now.Day > 0 ? Math.Round(MonthlyTotal / now.Day, 2) : 0;
         _topCategory = CategoryTotals.OrderByDescending(x => x.Value).FirstOrDefault().Key;
-        _trends = await ExpenseService.GetSpendingTrendsAsync(6);
+        _trends = await ExpenseService.GetSpendingTrendsAsync(6, filter);
+        _budgetStatuses = await ExpenseService.GetCategoryBudgetStatusesAsync(now.Year, now.Month, filter);
+        _pendingCount = await ExpenseService.GetPendingCountAsync();
 
+        _financialSummary = await ExpenseService.GetFinancialKpiSummaryAsync(filter, _trendDays);
+        _hoveredBalancePoint = _financialSummary.BalanceHistory.LastOrDefault();
+        _goalsSummary = await ExpenseService.GetGoalsSummaryAsync(filter);
+        _recurringSummary = await ExpenseService.GetRecurringSummaryAsync(filter);
+        _loansSummary = await ExpenseService.GetLoansSummaryAsync(filter);
+
+        _spendingAlerts = [];
         BuildAlerts(now);
         IsLoading = false;
     }
 
+    private async Task SetTrendDays(int days)
+    {
+        _trendDays = days;
+        if (_financialSummary != null)
+        {
+            _financialSummary = await ExpenseService.GetFinancialKpiSummaryAsync(ActiveMemberFilter, _trendDays);
+            _hoveredBalancePoint = _financialSummary.BalanceHistory.LastOrDefault();
+            StateHasChanged();
+        }
+    }
+
+    private static string FormatK(decimal val)
+    {
+        if (Math.Abs(val) >= 1_000_000) return (val / 1_000_000m).ToString("0.#") + "M";
+        if (Math.Abs(val) >= 1_000) return (val / 1_000m).ToString("0.#") + "k";
+        return val.ToString("0");
+    }
+
+    private (string linePath, string areaPath, List<(double x, double y, ExpenseService.BalanceTrendPoint pt)> points, decimal minBal, decimal maxBal, double zeroY) ComputeSvgChart()
+    {
+        if (_financialSummary == null || !_financialSummary.BalanceHistory.Any())
+            return (string.Empty, string.Empty, [], 0, 0, 0);
+
+        var history = _financialSummary.BalanceHistory;
+        int n = history.Count;
+
+        decimal minBal = history.Min(p => p.Balance);
+        decimal maxBal = history.Max(p => p.Balance);
+
+        decimal range = maxBal - minBal;
+        if (range <= 0) range = 1000m;
+
+        decimal padMin = minBal - (range * 0.12m);
+        decimal padMax = maxBal + (range * 0.12m);
+        double totalSpan = (double)(padMax - padMin);
+        if (totalSpan <= 0) totalSpan = 1.0;
+
+        double svgWidth = 650.0;
+        double svgHeight = 200.0;
+        double padLeft = 65.0;
+        double padRight = 20.0;
+        double padTop = 20.0;
+        double padBottom = 35.0;
+
+        double chartW = svgWidth - padLeft - padRight;
+        double chartH = svgHeight - padTop - padBottom;
+
+        var computedPoints = new List<(double x, double y, ExpenseService.BalanceTrendPoint pt)>();
+
+        for (int i = 0; i < n; i++)
+        {
+            double x = n > 1 ? padLeft + (i * (chartW / (n - 1))) : padLeft + (chartW / 2.0);
+            double ratio = ((double)history[i].Balance - (double)padMin) / totalSpan;
+            double y = padTop + chartH - (ratio * chartH);
+            computedPoints.Add((x, y, history[i]));
+        }
+
+        var sbLine = new System.Text.StringBuilder();
+        for (int i = 0; i < computedPoints.Count; i++)
+        {
+            var p = computedPoints[i];
+            if (i == 0)
+                sbLine.Append($"M {p.x:F1} {p.y:F1}");
+            else
+                sbLine.Append($" L {p.x:F1} {p.y:F1}");
+        }
+        string linePath = sbLine.ToString();
+
+        double bottomY = padTop + chartH;
+        var firstX = computedPoints[0].x;
+        var lastX = computedPoints[^1].x;
+        string areaPath = $"{linePath} L {lastX:F1} {bottomY:F1} L {firstX:F1} {bottomY:F1} Z";
+
+        double zeroRatio = (0.0 - (double)padMin) / totalSpan;
+        double zeroY = padTop + chartH - (zeroRatio * chartH);
+
+        return (linePath, areaPath, computedPoints, minBal, maxBal, zeroY);
+    }
+
     private void BuildAlerts(DateTime now)
     {
-        // Alert if daily avg is high (> 1000 INR/day)
+        if (_spendingAlerts is null) _spendingAlerts = [];
+
+        if (_financialSummary != null && _financialSummary.TotalNetBalance < 0)
+        {
+            _spendingAlerts.Add(new("danger", "🚨", $"Your total net balance across accounts is overdrawn (₹{_financialSummary.TotalNetBalance:N2})."));
+        }
+
+        if (_pendingCount > 0)
+            _spendingAlerts.Add(new("info", "📥", $"You have {_pendingCount} pending transaction{(_pendingCount > 1 ? "s" : "")} awaiting approval. Review them in the Pending tab."));
+
+        if (_recurringSummary.OverdueCount > 0)
+        {
+            _spendingAlerts.Add(new("danger", "⏰", $"You have {_recurringSummary.OverdueCount} overdue recurring bill{(_recurringSummary.OverdueCount > 1 ? "s" : "")} totaling ₹{_recurringSummary.OverdueAmount:N2}. Review them in Subscriptions."));
+        }
+        else if (_recurringSummary.DueNext7DaysCount > 0)
+        {
+            _spendingAlerts.Add(new("warning", "🔁", $"You have {_recurringSummary.DueNext7DaysCount} recurring bill{(_recurringSummary.DueNext7DaysCount > 1 ? "s" : "")} due in the next 7 days (₹{_recurringSummary.DueNext7DaysAmount:N2})."));
+        }
+
+        if (_loansSummary.OverdueCount > 0)
+        {
+            _spendingAlerts.Add(new("danger", "🚨", $"You have {_loansSummary.OverdueCount} overdue loan EMI{(_loansSummary.OverdueCount > 1 ? "s" : "")} totaling ₹{_loansSummary.OverdueAmount:N2}. Review them in Loans & EMI."));
+        }
+        else if (_loansSummary.DueNext7DaysCount > 0)
+        {
+            _spendingAlerts.Add(new("warning", "💳", $"You have {_loansSummary.DueNext7DaysCount} loan EMI{(_loansSummary.DueNext7DaysCount > 1 ? "s" : "")} due in the next 7 days (₹{_loansSummary.DueNext7DaysAmount:N2})."));
+        }
+
+        foreach (var b in _budgetStatuses.Where(b => b.Budget.HasValue && b.Budget > 0))
+        {
+            if (b.IsOverBudget)
+                _spendingAlerts.Add(new("danger", "🚨", $"{b.CategoryName} has exceeded its monthly budget! Spent ₹{b.Spent:N0} of ₹{b.Budget!.Value:N0} (+₹{(b.Spent - b.Budget.Value):N0})."));
+            else if (b.IsNearLimit)
+                _spendingAlerts.Add(new("warning", "⚠️", $"{b.CategoryName} is at {b.PercentUsed}% of its monthly budget (Spent ₹{b.Spent:N0} of ₹{b.Budget!.Value:N0})."));
+        }
+
         if (_dailyAvg > 1000)
             _spendingAlerts.Add(new("warning", "⚠️", $"Daily average is ₹{_dailyAvg:N0}. You're on track for a high-spend month."));
 
-        // Alert if no expenses yet this month
         if (MonthlyTotal == 0)
             _spendingAlerts.Add(new("info", "ℹ️", "No expenses recorded this month. Add your first expense to start tracking."));
 
-        // Alert if this month is already > last month (compare trend)
         if (_trends.Count >= 2)
         {
             var lastMonth = _trends[^2].Total;

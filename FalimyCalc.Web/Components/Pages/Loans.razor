@@ -1,0 +1,1110 @@
+@page "/loans"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>Loans & EMI Manager — FalimyCalc</PageTitle>
+
+<!-- ── Page Header ─────────────────────────────────────────────────────────── -->
+<div class="dash-header mb-3">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="dash-title mb-0">💳 Loans & EMI Repayment Manager</h1>
+            <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary fs-7 fw-semibold px-2 py-1">
+                @LoanItems.Count loans
+            </span>
+        </div>
+        <p class="dash-subtitle mt-1 mb-0">
+            @(Session.CurrentUser?.Role == "Admin"
+                ? "Track home loans, car loans, personal EMIs, interest rates, and amortization schedules across all family profiles"
+                : $"Track your loans, EMIs, and debt payoff schedule ({Session.CurrentUser?.Name})")
+        </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3 shadow-sm d-flex align-items-center gap-1"
+                @onclick="OpenCalculatorModal">
+            <span>🧮</span> <span>EMI Calculator</span>
+        </button>
+        <button type="button" class="btn-primary-glow" @onclick="OpenCreateModal">
+            <span class="btn-icon">＋</span> Add Loan / EMI
+        </button>
+    </div>
+</div>
+
+<!-- ── Admin One-Tap Switcher (Me vs All Family) ───────────────────────────── -->
+@if (Session.CurrentUser?.Role == "Admin")
+{
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+        <div class="d-flex align-items-center gap-2">
+            <span class="small fw-semibold text-muted">Quick View:</span>
+            <div class="view-toggle">
+                <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(false)">
+                    @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                </button>
+                <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(true)">
+                    👨‍👩‍👧‍👦 All Family
+                </button>
+            </div>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="SelectedMemberId" @bind:after="OnMemberFilterChanged">
+                <option value="">👥 All Profiles</option>
+                @foreach (var member in FamilyMembers)
+                {
+                    <option value="@member.GlobalId">@member.Avatar @member.Name</option>
+                }
+            </select>
+        </div>
+    </div>
+}
+
+<!-- ── Quick Toast Alert ──────────────────────────────────────────────────── -->
+@if (SuccessAlert)
+{
+    <div class="alert alert-success py-2 px-3 mb-3 small animate-in d-flex align-items-center justify-content-between">
+        <span>✅ @SuccessMessage</span>
+        <button type="button" class="btn-close btn-close-sm" @onclick="() => SuccessAlert = false"></button>
+    </div>
+}
+
+<!-- ── Top KPI Stat Cards ──────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+    <!-- 1. Total Outstanding Debt -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Total Outstanding Debt</span>
+                <span class="fs-5">🏦</span>
+            </div>
+            <h3 class="mb-1 fw-bold" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">
+                ₹ @Summary.TotalOutstandingPrincipal.ToString("N2")
+            </h3>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">Principal balance</span>
+                <span class="badge bg-danger-subtle text-danger small">@Summary.ActiveLoansCount Active Loans</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Total Monthly EMI Outflow -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Total Monthly EMI</span>
+                <span class="fs-5">💸</span>
+            </div>
+            <h3 class="mb-1 fw-bold" style="color: var(--dash-text); font-variant-numeric: tabular-nums;">
+                ₹ @Summary.TotalMonthlyEmi.ToString("N2")
+            </h3>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">Monthly installment</span>
+                <span class="badge bg-secondary-subtle text-secondary small">Fixed Outflow</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Due Soon / Overdue EMIs -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">EMIs Due in 7 Days</span>
+                <span class="fs-5">⏳</span>
+            </div>
+            <h3 class="mb-1 fw-bold @(Summary.OverdueCount > 0 ? "text-danger" : Summary.DueNext7DaysCount > 0 ? "text-warning" : "text-success")" style="font-variant-numeric: tabular-nums;">
+                ₹ @((Summary.DueNext7DaysAmount + Summary.OverdueAmount).ToString("N2"))
+            </h3>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">
+                    @(Summary.OverdueCount > 0 ? $"{Summary.OverdueCount} Overdue! " : "")@Summary.DueNext7DaysCount Upcoming
+                </span>
+                <span class="badge @(Summary.OverdueCount > 0 ? "bg-danger" : Summary.DueNext7DaysCount > 0 ? "bg-warning text-dark" : "bg-success-subtle text-success") small">
+                    @(Summary.OverdueCount > 0 ? "Immediate Action" : Summary.DueNext7DaysCount > 0 ? "Due Soon" : "All Clear")
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Overall Debt Payoff Progress -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Overall Repaid Ratio</span>
+                <span class="fs-5">🎉</span>
+            </div>
+            <h3 class="mb-1 fw-bold text-success" style="font-variant-numeric: tabular-nums;">
+                @Summary.OverallRepaidPct.ToString("F1")%
+            </h3>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">₹@Summary.TotalRepaidAmount.ToString("N0") repaid</span>
+                <span class="badge bg-success-subtle text-success small">@Summary.ClosedLoansCount Paid Off</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Filter Tabs ─────────────────────────────────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div class="btn-group btn-group-sm">
+        <button type="button" class="btn @(ActiveTab == "All" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("All")'>
+            All Loans (@LoanItems.Count)
+        </button>
+        <button type="button" class="btn @(ActiveTab == "Active" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("Active")'>
+            ⚡ Active (@LoanItems.Count(l => l.Status == "Active"))
+        </button>
+        <button type="button" class="btn @(ActiveTab == "DueSoon" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("DueSoon")'>
+            ⏳ Due Soon / Overdue (@(Summary.DueNext7DaysCount + Summary.OverdueCount))
+        </button>
+        <button type="button" class="btn @(ActiveTab == "Closed" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("Closed")'>
+            ✅ Closed / Paid Off (@LoanItems.Count(l => l.Status == "Closed"))
+        </button>
+    </div>
+</div>
+
+<!-- ── Loans Grid ──────────────────────────────────────────────────────────── -->
+@if (IsLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary mb-2" role="status"></div>
+        <p class="text-muted small">Loading loans and amortization schedules...</p>
+    </div>
+}
+else if (!FilteredLoans.Any())
+{
+    <div class="card border-0 shadow-sm p-5 text-center mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 16px;">
+        <div class="fs-1 mb-2">💳</div>
+        <h4 class="fw-bold" style="color: var(--dash-text);">No Loans or EMIs Recorded</h4>
+        <p class="text-muted small mb-4" style="max-width: 480px; margin: 0 auto;">
+            Track your home loan, vehicle loan, gadget EMIs, education loans, or credit card repayments with automated schedule calculation.
+        </p>
+
+        <!-- Common Quick Presets -->
+        <div class="d-flex justify-content-center gap-2 flex-wrap mb-4">
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickAddPreset("🏠 HDFC Home Loan", "HDFC Bank", "Home Loan", 3500000, 8.5m, 240, "🏠", "#6366f1")'>
+                🏠 Home Loan (₹35L at 8.5%)
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickAddPreset("🚗 SBI Car Loan", "SBI Bank", "Car Loan", 800000, 9.0m, 60, "🚗", "#10b981")'>
+                🚗 Car Loan (₹8L at 9.0%)
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickAddPreset("📱 iPhone No-Cost EMI", "HDFC / Apple", "Consumer Durable", 75000, 0m, 6, "📱", "#f59e0b")'>
+                📱 Gadget 0% EMI (₹75k / 6mo)
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickAddPreset("💼 ICICI Personal Loan", "ICICI Bank", "Personal Loan", 300000, 11.5m, 36, "💼", "#f43f5e")'>
+                💼 Personal Loan (₹3L at 11.5%)
+            </button>
+        </div>
+
+        <div>
+            <button class="btn btn-primary" @onclick="OpenCreateModal">
+                ➕ Add Your First Loan / EMI
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var loan in FilteredLoans)
+        {
+            var today = DateTime.Today;
+            var daysUntil = (loan.NextDueDate.Date - today).Days;
+            var isClosed = loan.Status == "Closed" || loan.OutstandingBalance <= 0;
+            var isOverdue = !isClosed && daysUntil < 0;
+            var isDueToday = !isClosed && daysUntil == 0;
+            var isDueSoon = !isClosed && daysUntil > 0 && daysUntil <= 7;
+            var loanColor = string.IsNullOrWhiteSpace(loan.Colour) ? "#f43f5e" : loan.Colour;
+            var owner = loan.MemberGlobalId.HasValue && MemberMap.TryGetValue(loan.MemberGlobalId.Value, out var m) ? m : null;
+
+            double paidProgressPct = loan.PrincipalAmount > 0
+                ? Math.Min(100.0, (double)((loan.PrincipalAmount - loan.OutstandingBalance) / loan.PrincipalAmount * 100m))
+                : 0.0;
+
+            int monthsRemaining = Math.Max(0, loan.TenureMonths - loan.EmisPaid);
+
+            <div class="col-md-6 col-lg-4">
+                <div class="card h-100 shadow-sm border-0 position-relative loan-card"
+                     style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px; overflow: hidden; opacity: @(isClosed ? "0.85" : "1");">
+                    
+                    <!-- Top color accent -->
+                    <div style="height: 5px; background: @loanColor; width: 100%;"></div>
+
+                    <div class="card-body p-3 d-flex flex-column justify-content-between">
+                        <!-- Header: Icon, Name, Lender, Badges -->
+                        <div class="d-flex align-items-start justify-content-between mb-3">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="sub-icon-box" style="background: @(loanColor)20; border: 1px solid @(loanColor)40; color: @loanColor;">
+                                    <span class="fs-4">@(string.IsNullOrWhiteSpace(loan.Icon) ? "💳" : loan.Icon)</span>
+                                </div>
+                                <div>
+                                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text); font-size: 1.05rem;">
+                                        @loan.Name
+                                    </h5>
+                                    <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
+                                        <span class="badge bg-secondary-subtle text-secondary small" style="font-size: 0.7rem;">
+                                            @(loan.Lender ?? loan.LoanType)
+                                        </span>
+                                        <span class="badge border small" style="font-size: 0.7rem; border-color: var(--dash-border) !important;">
+                                            @loan.InterestRate% p.a.
+                                        </span>
+                                        @if (owner != null)
+                                        {
+                                            <span class="member-chip" style="background-color: @(owner.Colour ?? "#4f46e5"); font-size: 0.65rem; padding: 1px 6px;">
+                                                <span>@owner.Avatar</span>
+                                                <span>@owner.Name</span>
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Status / Due Pill -->
+                            <div>
+                                @if (isClosed)
+                                {
+                                    <span class="badge bg-success text-white px-2 py-1" style="font-size: 0.72rem;">
+                                        🎉 Closed
+                                    </span>
+                                }
+                                else if (isOverdue)
+                                {
+                                    <span class="badge bg-danger text-white px-2 py-1 pulse-badge" style="font-size: 0.72rem;">
+                                        🚨 Overdue @(Math.Abs(daysUntil))d
+                                    </span>
+                                }
+                                else if (isDueToday)
+                                {
+                                    <span class="badge bg-danger text-white px-2 py-1 pulse-badge" style="font-size: 0.72rem;">
+                                        ⚡ Due Today!
+                                    </span>
+                                }
+                                else if (isDueSoon)
+                                {
+                                    <span class="badge bg-warning text-dark px-2 py-1" style="font-size: 0.72rem;">
+                                        ⏳ Due in @daysUntil d
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-secondary-subtle text-secondary px-2 py-1" style="font-size: 0.72rem;">
+                                        📅 in @daysUntil d
+                                    </span>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Amount Banner & Details -->
+                        <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <div class="d-flex justify-content-between align-items-baseline mb-1">
+                                <span class="small text-muted fw-semibold text-uppercase" style="font-size: 0.7rem;">Monthly EMI</span>
+                                <span class="small text-muted" style="font-size: 0.72rem;">
+                                    <strong>@loan.EmisPaid / @loan.TenureMonths</strong> EMIs Paid
+                                </span>
+                            </div>
+
+                            <h3 class="fw-bold mb-2" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">
+                                ₹ @loan.EmiAmount.ToString("N2")
+                                <span class="fs-6 fw-normal text-muted">/ month</span>
+                            </h3>
+
+                            <!-- Progress Bar -->
+                            <div class="progress mb-2" style="height: 6px; border-radius: 3px; background: rgba(0,0,0,0.06);">
+                                <div class="progress-bar bg-success" style="width: @paidProgressPct%;"></div>
+                            </div>
+
+                            <div class="d-flex justify-content-between align-items-center small text-muted" style="font-size: 0.75rem;">
+                                <span>Outstanding: <strong class="@(loan.OutstandingBalance > 0 ? "text-danger" : "text-success")">₹@loan.OutstandingBalance.ToString("N0")</strong></span>
+                                <span>Total: ₹@loan.PrincipalAmount.ToString("N0")</span>
+                            </div>
+
+                            <!-- Next Due & Account -->
+                            @if (!isClosed)
+                            {
+                                <div class="d-flex justify-content-between align-items-center small text-muted pt-2 border-top mt-2" style="border-color: var(--dash-border) !important; font-size: 0.75rem;">
+                                    <span>
+                                        Next EMI: <strong>@loan.NextDueDate.ToString("dd MMM yyyy")</strong>
+                                    </span>
+                                    <span>@monthsRemaining months left</span>
+                                </div>
+                            }
+                        </div>
+
+                        <!-- Bank Account & Notes -->
+                        @if (loan.BankAccount != null || !string.IsNullOrWhiteSpace(loan.Note))
+                        {
+                            <div class="d-flex align-items-center justify-content-between small text-muted mb-3 px-1">
+                                @if (loan.BankAccount != null)
+                                {
+                                    <span class="badge border small d-inline-flex align-items-center gap-1"
+                                          style="font-size: 0.7rem; background: @(loan.BankAccount.Colour ?? "#4f46e5")15; color: @(loan.BankAccount.Colour ?? "#4f46e5"); border-color: @(loan.BankAccount.Colour ?? "#4f46e5")30 !important;">
+                                        <span>@(loan.BankAccount.Icon ?? "🏦")</span>
+                                        <span>@loan.BankAccount.AccountName</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span></span>
+                                }
+
+                                @if (!string.IsNullOrWhiteSpace(loan.Note))
+                                {
+                                    <span class="text-truncate text-muted small" style="max-width: 160px;" title="@loan.Note">
+                                        📝 @loan.Note
+                                    </span>
+                                }
+                            </div>
+                        }
+
+                        <!-- Action Buttons -->
+                        <div class="d-flex gap-1 pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                            @if (!isClosed)
+                            {
+                                <button type="button" class="btn btn-sm btn-success flex-fill py-1 px-1 fw-semibold d-flex align-items-center justify-content-center gap-1 shadow-sm"
+                                        @onclick="() => PromptPayEmi(loan)" title="Record monthly EMI payment and advance due date">
+                                    <span>✓</span> <span>Pay EMI</span>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-primary px-2"
+                                        @onclick="() => PromptPrepay(loan)" title="Make an extra principal prepayment">
+                                    ⚡ Prepay
+                                </button>
+                            }
+                            <button type="button" class="btn btn-sm btn-outline-secondary px-2"
+                                    @onclick="() => ViewSchedule(loan)" title="View Amortization Schedule">
+                                📄
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary px-2"
+                                    @onclick="() => OpenEditModal(loan)" title="Edit Loan Details">
+                                ✏️
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger px-2"
+                                    @onclick="() => ConfirmDelete(loan)" title="Delete Loan Account">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<!-- ── Create / Edit Loan Modal ───────────────────────────────────────────── -->
+@if (ShowModal)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseModal"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 540px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                <span>@(EditingLoan.Id == 0 ? "💳 Add New Loan / EMI Account" : "✏️ Edit Loan Details")</span>
+            </h5>
+            <button type="button" class="btn-close" @onclick="CloseModal"></button>
+        </div>
+        <div class="modal-panel-body">
+            @if (!string.IsNullOrEmpty(ModalError))
+            {
+                <div class="alert alert-danger py-2 px-3 small mb-3">
+                    @ModalError
+                </div>
+            }
+
+            <!-- 1. Loan Name & Lender -->
+            <div class="row g-2 mb-3">
+                <div class="col-sm-7">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Loan Account Name <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" placeholder="e.g. HDFC Home Loan, SBI Car Loan" @bind="EditingLoan.Name" maxlength="150" />
+                </div>
+                <div class="col-sm-5">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Bank / Lender</label>
+                    <input type="text" class="form-control" placeholder="e.g. HDFC, SBI, Bajaj" @bind="EditingLoan.Lender" maxlength="150" />
+                </div>
+            </div>
+
+            <!-- 2. Loan Type -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Loan Category</label>
+                <select class="form-select" @bind="EditingLoan.LoanType">
+                    <option value="Home Loan">🏠 Home Loan</option>
+                    <option value="Car Loan">🚗 Vehicle / Car Loan</option>
+                    <option value="Personal Loan">💼 Personal Loan</option>
+                    <option value="Education Loan">🎓 Education Loan</option>
+                    <option value="Consumer Durable">📱 Electronics / Consumer EMI</option>
+                    <option value="Gold Loan">💍 Gold Loan</option>
+                    <option value="Credit Card EMI">💳 Credit Card EMI</option>
+                    <option value="Other">📦 Other Loan</option>
+                </select>
+            </div>
+
+            <!-- 3. Principal Amount, Interest Rate, Tenure Months -->
+            <div class="row g-2 mb-3">
+                <div class="col-sm-4">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Principal (₹) <span class="text-danger">*</span></label>
+                    <input type="number" step="1000" min="1" class="form-control" placeholder="500000" @bind="EditingLoan.PrincipalAmount" @bind:after="RecalculateEditingEmi" />
+                </div>
+                <div class="col-sm-4">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Rate (% p.a.)</label>
+                    <input type="number" step="0.05" min="0" class="form-control" placeholder="8.5" @bind="EditingLoan.InterestRate" @bind:after="RecalculateEditingEmi" />
+                </div>
+                <div class="col-sm-4">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Months <span class="text-danger">*</span></label>
+                    <input type="number" min="1" max="480" class="form-control" placeholder="60" @bind="EditingLoan.TenureMonths" @bind:after="RecalculateEditingEmi" />
+                </div>
+            </div>
+
+            <!-- 4. Monthly EMI Amount (Calculated with override option) -->
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Monthly EMI (₹) <span class="text-danger">*</span></label>
+                    <input type="number" step="0.01" min="1" class="form-control" @bind="EditingLoan.EmiAmount" />
+                    <span class="small text-muted" style="font-size: 0.72rem;">Calculated automatically; can be edited.</span>
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Remaining Balance (₹)</label>
+                    <input type="number" step="0.01" min="0" class="form-control" @bind="EditingLoan.OutstandingBalance" />
+                    <span class="small text-muted" style="font-size: 0.72rem;">Defaults to principal if starting fresh.</span>
+                </div>
+            </div>
+
+            <!-- 5. Start Date & Next Due Date -->
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Loan Start Date</label>
+                    <input type="date" class="form-control" @bind="EditingLoan.StartDate" />
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Next EMI Due Date <span class="text-danger">*</span></label>
+                    <input type="date" class="form-control" @bind="EditingLoan.NextDueDate" />
+                </div>
+            </div>
+
+            <!-- 6. EMIs Completed So Far -->
+            @if (EditingLoan.Id != 0)
+            {
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">EMIs Completed So Far</label>
+                    <input type="number" min="0" max="@EditingLoan.TenureMonths" class="form-control" @bind="EditingLoan.EmisPaid" />
+                </div>
+            }
+
+            <!-- 7. Bank Account & Profile Owner -->
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Debit Bank Account</label>
+                    <select class="form-select" @bind="EditingAccountString">
+                        <option value="">🏦 Any / Unspecified</option>
+                        @foreach (var acc in BankAccounts)
+                        {
+                            <option value="@acc.GlobalId">@acc.Icon @acc.AccountName</option>
+                        }
+                    </select>
+                </div>
+                @if (Session.CurrentUser?.Role == "Admin")
+                {
+                    <div class="col-sm-6">
+                        <label class="form-label small fw-semibold text-uppercase text-muted">Profile Owner</label>
+                        <select class="form-select" @bind="EditingMemberString">
+                            <option value="">👨‍👩‍👧‍👦 Family-Wide Shared</option>
+                            @foreach (var mem in FamilyMembers)
+                            {
+                                <option value="@mem.GlobalId">@mem.Avatar @mem.Name</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+
+            <!-- 8. Icon & Colour Palette -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Choose Icon & Colour</label>
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                    @foreach (var icon in QuickIcons)
+                    {
+                        <button type="button" class="btn btn-sm @(EditingLoan.Icon == icon ? "btn-primary" : "btn-outline-secondary") px-2"
+                                @onclick="() => EditingLoan.Icon = icon">
+                            @icon
+                        </button>
+                    }
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    @foreach (var col in QuickColours)
+                    {
+                        <button type="button" class="color-swatch-btn @(EditingLoan.Colour == col ? "selected" : "")"
+                                style="background-color: @col;"
+                                @onclick="() => EditingLoan.Colour = col">
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <!-- 9. Note / Remarks -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Loan Reference / Account No. (Optional)</label>
+                <input type="text" class="form-control" placeholder="e.g. Loan A/C #12345678, Repayment date: 5th of every month" @bind="EditingLoan.Note" maxlength="500" />
+            </div>
+
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <button type="button" class="btn btn-outline-secondary" @onclick="CloseModal">Cancel</button>
+                <button type="button" class="btn btn-primary px-4 fw-semibold" @onclick="SaveLoanAsync" disabled="@IsSaving">
+                    @(IsSaving ? "Saving..." : (EditingLoan.Id == 0 ? "Create Loan" : "Save Changes"))
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ── Record Payment / Pay EMI Modal ─────────────────────────────────────── -->
+@if (LoanToPay != null)
+{
+    <div class="modal-backdrop-custom" @onclick="() => LoanToPay = null"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 440px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                <span>✓ @(PaymentType == "EMI" ? "Pay Monthly EMI" : "⚡ Part Prepayment")</span>
+            </h5>
+            <button type="button" class="btn-close" @onclick="() => LoanToPay = null"></button>
+        </div>
+        <div class="modal-panel-body">
+            <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <strong style="color: var(--dash-text);">@LoanToPay.Name</strong>
+                    <span class="badge bg-secondary-subtle text-secondary">@LoanToPay.LoanType</span>
+                </div>
+                <div class="small text-muted">
+                    Outstanding Balance: <strong>₹@LoanToPay.OutstandingBalance.ToString("N2")</strong>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Payment Type</label>
+                <select class="form-select" @bind="PaymentType">
+                    <option value="EMI">Monthly Installment (EMI)</option>
+                    <option value="Prepayment">Extra Principal Prepayment</option>
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Payment Amount (₹) <span class="text-danger">*</span></label>
+                <input type="number" step="0.01" min="1" class="form-control form-control-lg fw-bold" @bind="PaymentAmount" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Payment Date <span class="text-danger">*</span></label>
+                <input type="date" class="form-control" @bind="PaymentDate" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Debit From Bank Account</label>
+                <select class="form-select" @bind="PaymentAccountString">
+                    <option value="">🏦 Any / Unspecified</option>
+                    @foreach (var acc in BankAccounts)
+                    {
+                        <option value="@acc.GlobalId">@acc.Icon @acc.AccountName (Bal: ₹@acc.InitialBalance.ToString("N0"))</option>
+                    }
+                </select>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <button type="button" class="btn btn-outline-secondary" @onclick="() => LoanToPay = null">Cancel</button>
+                <button type="button" class="btn btn-success px-4 fw-semibold" @onclick="ExecutePaymentAsync" disabled="@IsSaving">
+                    @(IsSaving ? "Recording..." : "Confirm Payment ✓")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ── Amortization Schedule Modal ────────────────────────────────────────── -->
+@if (LoanForSchedule != null)
+{
+    <div class="modal-backdrop-custom" @onclick="() => LoanForSchedule = null"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 680px;">
+        <div class="modal-panel-header">
+            <div>
+                <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                    <span>📄 Repayment Schedule: @LoanForSchedule.Name</span>
+                </h5>
+                <span class="small text-muted">₹@LoanForSchedule.PrincipalAmount.ToString("N0") @LoanForSchedule.InterestRate% p.a. for @LoanForSchedule.TenureMonths months</span>
+            </div>
+            <button type="button" class="btn-close" @onclick="() => LoanForSchedule = null"></button>
+        </div>
+        <div class="modal-panel-body p-0">
+            <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0" style="font-size: 0.8rem;">
+                    <thead class="table-light sticky-top" style="background: var(--dash-surface-raised);">
+                        <tr>
+                            <th>#</th>
+                            <th>Date</th>
+                            <th>Beginning</th>
+                            <th>EMI</th>
+                            <th>Principal</th>
+                            <th>Interest</th>
+                            <th>Ending Bal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in ActiveSchedule)
+                        {
+                            <tr>
+                                <td class="fw-bold">@row.MonthNumber</td>
+                                <td>@row.PaymentDate.ToString("MMM yyyy")</td>
+                                <td>₹@row.BeginningBalance.ToString("N0")</td>
+                                <td class="fw-semibold text-danger">₹@row.EmiAmount.ToString("N0")</td>
+                                <td class="text-success">₹@row.PrincipalPaid.ToString("N0")</td>
+                                <td class="text-muted">₹@row.InterestPaid.ToString("N0")</td>
+                                <td class="fw-semibold">₹@row.EndingBalance.ToString("N0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ── Interactive Standalone EMI Calculator Modal ────────────────────────── -->
+@if (ShowCalculatorModal)
+{
+    <div class="modal-backdrop-custom" @onclick="() => ShowCalculatorModal = false"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 500px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                <span>🧮 Smart EMI Calculator</span>
+            </h5>
+            <button type="button" class="btn-close" @onclick="() => ShowCalculatorModal = false"></button>
+        </div>
+        <div class="modal-panel-body">
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Loan Amount (₹)</label>
+                <input type="number" step="10000" min="1000" class="form-control" @bind="CalcPrincipal" @bind:after="RunCalculator" />
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Interest Rate (% p.a.)</label>
+                    <input type="number" step="0.1" min="0" max="40" class="form-control" @bind="CalcRate" @bind:after="RunCalculator" />
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Tenure (Months)</label>
+                    <input type="number" min="1" max="480" class="form-control" @bind="CalcMonths" @bind:after="RunCalculator" />
+                </div>
+            </div>
+
+            <!-- Results Card -->
+            <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <div class="text-center mb-3">
+                    <span class="small text-muted text-uppercase fw-semibold d-block">Monthly EMI Amount</span>
+                    <h2 class="fw-bold mb-0" style="color: var(--c-rose, #f43f5e);">
+                        ₹ @CalcEmi.ToString("N2")
+                    </h2>
+                </div>
+                <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted">Total Principal:</span>
+                    <strong>₹ @CalcPrincipal.ToString("N2")</strong>
+                </div>
+                <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted">Total Interest Payable:</span>
+                    <strong class="text-danger">₹ @CalcTotalInterest.ToString("N2")</strong>
+                </div>
+                <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
+                    <span class="text-muted">Total Repayment (P + I):</span>
+                    <strong class="text-primary">₹ @CalcTotalAmount.ToString("N2")</strong>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ShowCalculatorModal = false">Close</button>
+                <button type="button" class="btn btn-primary btn-sm px-3" @onclick="TransferCalcToNewLoan">
+                    ➕ Create Loan With These Numbers
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ── Delete Confirmation Modal ─────────────────────────────────────────── -->
+@if (LoanToDelete != null)
+{
+    <div class="modal-backdrop-custom" @onclick="() => LoanToDelete = null"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 420px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold text-danger d-flex align-items-center gap-2">
+                <span>🗑️ Delete Loan Account</span>
+            </h5>
+            <button type="button" class="btn-close" @onclick="() => LoanToDelete = null"></button>
+        </div>
+        <div class="modal-panel-body">
+            <p class="small text-muted">
+                Are you sure you want to delete the loan <strong>@LoanToDelete.Name</strong>?
+                This will soft-delete the loan configuration and historic payment records.
+            </p>
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => LoanToDelete = null">Cancel</button>
+                <button type="button" class="btn btn-danger btn-sm px-3 fw-semibold" @onclick="ExecuteDeleteAsync">Confirm Delete</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool IsLoading = true;
+    private bool IsSaving = false;
+    private bool ShowModal = false;
+    private bool ShowCalculatorModal = false;
+    private bool SuccessAlert = false;
+    private string SuccessMessage = "";
+    private string? ModalError;
+    private string ActiveTab = "All";
+
+    private List<Loan> LoanItems = [];
+    private ExpenseService.LoansSummary Summary = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, []);
+    private List<FamilyMember> FamilyMembers = [];
+    private Dictionary<Guid, FamilyMember> MemberMap = [];
+    private List<BankAccount> BankAccounts = [];
+
+    private Loan EditingLoan = new();
+    private string EditingAccountString = "";
+    private string EditingMemberString = "";
+
+    private Loan? LoanToPay;
+    private decimal PaymentAmount;
+    private DateTime PaymentDate = DateTime.Today;
+    private string PaymentType = "EMI";
+    private string PaymentAccountString = "";
+
+    private Loan? LoanForSchedule;
+    private List<ExpenseService.AmortizationRow> ActiveSchedule = [];
+    private Loan? LoanToDelete;
+
+    // Calculator state
+    private decimal CalcPrincipal = 500000;
+    private decimal CalcRate = 8.5m;
+    private int CalcMonths = 60;
+    private decimal CalcEmi;
+    private decimal CalcTotalInterest;
+    private decimal CalcTotalAmount;
+
+    private bool _showAllMembers = false;
+    private string? SelectedMemberId;
+
+    private readonly string[] QuickIcons = ["🏠", "🚗", "💼", "🎓", "📱", "💳", "💍", "📦"];
+    private readonly string[] QuickColours = ["#f43f5e", "#6366f1", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#3b82f6"];
+
+    private Guid? ActiveMemberFilter
+    {
+        get
+        {
+            if (Session.CurrentUser?.Role != "Admin")
+                return Session.CurrentUser?.GlobalId;
+
+            if (Guid.TryParse(SelectedMemberId, out var g))
+                return g;
+
+            return _showAllMembers ? null : Session.CurrentUser?.GlobalId;
+        }
+    }
+
+    private IEnumerable<Loan> FilteredLoans => ActiveTab switch
+    {
+        "Active" => LoanItems.Where(l => l.Status == "Active"),
+        "DueSoon" => LoanItems.Where(l => l.Status == "Active" && (l.NextDueDate.Date < DateTime.Today || l.NextDueDate.Date <= DateTime.Today.AddDays(7))),
+        "Closed" => LoanItems.Where(l => l.Status == "Closed"),
+        _ => LoanItems
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
+        MemberMap = FamilyMembers.ToDictionary(m => m.GlobalId);
+        _showAllMembers = false; // Default admin view to their personal profile
+        RunCalculator();
+        await LoadDataAsync();
+    }
+
+    private async Task SetViewMode(bool showAll)
+    {
+        _showAllMembers = showAll;
+        SelectedMemberId = null;
+        await LoadDataAsync();
+    }
+
+    private async Task OnMemberFilterChanged()
+    {
+        if (string.IsNullOrEmpty(SelectedMemberId))
+        {
+            _showAllMembers = true;
+        }
+        else if (Guid.TryParse(SelectedMemberId, out var sg) && sg == Session.CurrentUser?.GlobalId)
+        {
+            _showAllMembers = false;
+        }
+        await LoadDataAsync();
+    }
+
+    private void SetTab(string tab)
+    {
+        ActiveTab = tab;
+    }
+
+    private async Task LoadDataAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            var filter = ActiveMemberFilter;
+            LoanItems = await ExpenseService.GetLoansAsync(filter);
+            Summary = await ExpenseService.GetLoansSummaryAsync(filter);
+            BankAccounts = await ExpenseService.GetBankAccountsAsync(filter);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading loans: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        ModalError = null;
+        EditingLoan = new Loan
+        {
+            StartDate = DateTime.Today,
+            NextDueDate = DateTime.Today.AddMonths(1),
+            InterestRate = 8.5m,
+            TenureMonths = 60,
+            PrincipalAmount = 500000,
+            OutstandingBalance = 500000,
+            Colour = "#f43f5e",
+            Icon = "💳"
+        };
+        RecalculateEditingEmi();
+        EditingAccountString = "";
+        EditingMemberString = ActiveMemberFilter?.ToString() ?? "";
+        ShowModal = true;
+    }
+
+    private void QuickAddPreset(string name, string lender, string loanType, decimal principal, decimal rate, int months, string icon, string col)
+    {
+        ModalError = null;
+        EditingLoan = new Loan
+        {
+            Name = name,
+            Lender = lender,
+            LoanType = loanType,
+            PrincipalAmount = principal,
+            OutstandingBalance = principal,
+            InterestRate = rate,
+            TenureMonths = months,
+            StartDate = DateTime.Today,
+            NextDueDate = DateTime.Today.AddMonths(1),
+            Icon = icon,
+            Colour = col
+        };
+        RecalculateEditingEmi();
+        EditingAccountString = "";
+        EditingMemberString = ActiveMemberFilter?.ToString() ?? "";
+        ShowModal = true;
+    }
+
+    private void OpenEditModal(Loan loan)
+    {
+        ModalError = null;
+        EditingLoan = new Loan
+        {
+            Id = loan.Id,
+            GlobalId = loan.GlobalId,
+            Name = loan.Name,
+            Lender = loan.Lender,
+            LoanType = loan.LoanType,
+            PrincipalAmount = loan.PrincipalAmount,
+            OutstandingBalance = loan.OutstandingBalance,
+            InterestRate = loan.InterestRate,
+            TenureMonths = loan.TenureMonths,
+            EmiAmount = loan.EmiAmount,
+            TotalPaidAmount = loan.TotalPaidAmount,
+            EmisPaid = loan.EmisPaid,
+            StartDate = loan.StartDate,
+            NextDueDate = loan.NextDueDate,
+            Status = loan.Status,
+            Colour = loan.Colour,
+            Icon = loan.Icon,
+            Note = loan.Note,
+            MemberGlobalId = loan.MemberGlobalId,
+            AccountGlobalId = loan.AccountGlobalId,
+            BankAccountId = loan.BankAccountId
+        };
+        EditingAccountString = loan.AccountGlobalId?.ToString() ?? "";
+        EditingMemberString = loan.MemberGlobalId?.ToString() ?? "";
+        ShowModal = true;
+    }
+
+    private void RecalculateEditingEmi()
+    {
+        if (EditingLoan.PrincipalAmount > 0 && EditingLoan.TenureMonths > 0)
+        {
+            EditingLoan.EmiAmount = ExpenseService.CalculateEmi(EditingLoan.PrincipalAmount, EditingLoan.InterestRate, EditingLoan.TenureMonths);
+            if (EditingLoan.OutstandingBalance <= 0)
+            {
+                EditingLoan.OutstandingBalance = EditingLoan.PrincipalAmount;
+            }
+        }
+    }
+
+    private void CloseModal()
+    {
+        ShowModal = false;
+        EditingLoan = new();
+    }
+
+    private async Task SaveLoanAsync()
+    {
+        if (string.IsNullOrWhiteSpace(EditingLoan.Name))
+        {
+            ModalError = "Loan name is required.";
+            return;
+        }
+
+        if (EditingLoan.PrincipalAmount <= 0)
+        {
+            ModalError = "Principal amount must be greater than zero.";
+            return;
+        }
+
+        if (EditingLoan.TenureMonths <= 0)
+        {
+            ModalError = "Tenure in months must be at least 1.";
+            return;
+        }
+
+        IsSaving = true;
+        try
+        {
+            if (Guid.TryParse(EditingAccountString, out var aId)) EditingLoan.AccountGlobalId = aId;
+            else EditingLoan.AccountGlobalId = null;
+
+            if (Guid.TryParse(EditingMemberString, out var mId)) EditingLoan.MemberGlobalId = mId;
+            else EditingLoan.MemberGlobalId = null;
+
+            if (EditingLoan.Id == 0)
+            {
+                await ExpenseService.CreateLoanAsync(EditingLoan, EditingLoan.MemberGlobalId);
+            }
+            else
+            {
+                await ExpenseService.UpdateLoanAsync(EditingLoan);
+            }
+
+            ShowModal = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            ModalError = $"Failed to save: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void PromptPayEmi(Loan loan)
+    {
+        LoanToPay = loan;
+        PaymentType = "EMI";
+        PaymentAmount = loan.EmiAmount;
+        PaymentDate = DateTime.Today;
+        PaymentAccountString = loan.AccountGlobalId?.ToString() ?? "";
+    }
+
+    private void PromptPrepay(Loan loan)
+    {
+        LoanToPay = loan;
+        PaymentType = "Prepayment";
+        PaymentAmount = Math.Min(loan.OutstandingBalance, loan.EmiAmount * 2);
+        PaymentDate = DateTime.Today;
+        PaymentAccountString = loan.AccountGlobalId?.ToString() ?? "";
+    }
+
+    private async Task ExecutePaymentAsync()
+    {
+        if (LoanToPay == null) return;
+        IsSaving = true;
+        try
+        {
+            Guid? accId = Guid.TryParse(PaymentAccountString, out var aId) ? aId : null;
+            await ExpenseService.RecordLoanPaymentAsync(LoanToPay.GlobalId, PaymentAmount, PaymentDate, accId, PaymentType);
+
+            SuccessMessage = $"Recorded ₹{PaymentAmount:N2} for {LoanToPay.Name} and updated loan balance!";
+            SuccessAlert = true;
+            LoanToPay = null;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            ModalError = $"Error logging payment: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void ViewSchedule(Loan loan)
+    {
+        LoanForSchedule = loan;
+        ActiveSchedule = ExpenseService.GenerateAmortizationSchedule(loan.PrincipalAmount, loan.InterestRate, loan.TenureMonths, loan.EmiAmount, loan.StartDate);
+    }
+
+    private void OpenCalculatorModal()
+    {
+        RunCalculator();
+        ShowCalculatorModal = true;
+    }
+
+    private void RunCalculator()
+    {
+        if (CalcPrincipal > 0 && CalcMonths > 0)
+        {
+            CalcEmi = ExpenseService.CalculateEmi(CalcPrincipal, CalcRate, CalcMonths);
+            CalcTotalAmount = CalcEmi * CalcMonths;
+            CalcTotalInterest = Math.Max(0m, CalcTotalAmount - CalcPrincipal);
+        }
+    }
+
+    private void TransferCalcToNewLoan()
+    {
+        ShowCalculatorModal = false;
+        EditingLoan = new Loan
+        {
+            Name = "New Loan Account",
+            PrincipalAmount = CalcPrincipal,
+            OutstandingBalance = CalcPrincipal,
+            InterestRate = CalcRate,
+            TenureMonths = CalcMonths,
+            EmiAmount = CalcEmi,
+            StartDate = DateTime.Today,
+            NextDueDate = DateTime.Today.AddMonths(1),
+            Colour = "#6366f1",
+            Icon = "💳"
+        };
+        ShowModal = true;
+    }
+
+    private void ConfirmDelete(Loan loan)
+    {
+        LoanToDelete = loan;
+    }
+
+    private async Task ExecuteDeleteAsync()
+    {
+        if (LoanToDelete != null)
+        {
+            await ExpenseService.DeleteLoanAsync(LoanToDelete.GlobalId);
+            LoanToDelete = null;
+            await LoadDataAsync();
+        }
+    }
+}

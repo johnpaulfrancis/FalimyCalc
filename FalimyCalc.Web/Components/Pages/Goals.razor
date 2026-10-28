@@ -1,0 +1,1115 @@
+@page "/goals"
+@rendermode InteractiveServer
+@using FalimyCalc.Data.Entities
+@using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
+@inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>Financial Goals & Sinking Funds — FalimyCalc</PageTitle>
+
+<!-- ── Page Header ─────────────────────────────────────────────────────────── -->
+<div class="dash-header mb-3">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="dash-title mb-0">Financial Goals & Sinking Funds</h1>
+            <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary fs-7 fw-semibold px-2 py-1">
+                @GoalItems.Count goals
+            </span>
+        </div>
+        <p class="dash-subtitle mt-1 mb-0">
+            @(Session.CurrentUser?.Role == "Admin"
+                ? "Track savings targets, emergency reserves, and sinking funds across all family members"
+                : $"Track your personal savings targets, emergency reserves, and sinking funds ({Session.CurrentUser?.Name})")
+        </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <button type="button" class="btn-primary-glow" @onclick="OpenCreateModal">
+            <span class="btn-icon">＋</span> New Goal
+        </button>
+    </div>
+</div>
+
+<!-- ── Admin One-Tap Switcher (Me vs All Family) ───────────────────────────── -->
+@if (Session.CurrentUser?.Role == "Admin")
+{
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+        <div class="d-flex align-items-center gap-2">
+            <span class="small fw-semibold text-muted">Quick View:</span>
+            <div class="view-toggle">
+                <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(false)">
+                    @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                </button>
+                <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(true)">
+                    👨‍👩‍👧‍👦 All Family
+                </button>
+            </div>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="SelectedMemberId" @bind:after="OnMemberFilterChanged">
+                <option value="">👥 All Profiles</option>
+                @foreach (var member in FamilyMembers)
+                {
+                    <option value="@member.GlobalId">@member.Avatar @member.Name</option>
+                }
+            </select>
+        </div>
+    </div>
+}
+
+<!-- ── Top KPI Stat Cards ──────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+    <!-- 1. Total Saved -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Total Saved in Funds</span>
+                <span class="fs-5">💰</span>
+            </div>
+            <h3 class="mb-1 fw-bold text-success" style="font-variant-numeric: tabular-nums;">
+                ₹ @Summary.TotalSaved.ToString("N2")
+            </h3>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">Across @GoalItems.Count active fund(s)</span>
+                <span class="badge bg-success-subtle text-success small">Locked & Saved</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Total Target -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Combined Target</span>
+                <span class="fs-5">🎯</span>
+            </div>
+            <h3 class="mb-1 fw-bold text-primary" style="font-variant-numeric: tabular-nums;">
+                ₹ @Summary.TotalTarget.ToString("N2")
+            </h3>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">Remaining: ₹ @(Math.Max(0, Summary.TotalTarget - Summary.TotalSaved).ToString("N0"))</span>
+                <span class="badge bg-primary-subtle text-primary small">Goals</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Overall Progress -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Overall Progress</span>
+                <span class="fs-5">📈</span>
+            </div>
+            <h3 class="mb-1 fw-bold" style="color: var(--dash-text); font-variant-numeric: tabular-nums;">
+                @Summary.OverallProgressPct.ToString("F1")%
+            </h3>
+            <div class="progress mb-2" style="height: 6px; border-radius: 3px; background: var(--dash-surface-raised);">
+                <div class="progress-bar bg-success" style="width: @Math.Min(Summary.OverallProgressPct, 100.0)%;"></div>
+            </div>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-1 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">Milestone completion</span>
+                <span class="badge @(Summary.OverallProgressPct >= 50 ? "bg-success-subtle text-success" : "bg-warning-subtle text-warning") small">
+                    @(Summary.OverallProgressPct >= 100 ? "🎉 All Met!" : Summary.OverallProgressPct >= 50 ? "🚀 Halfway" : "🌱 In Progress")
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Goal Count / Badges -->
+    <div class="col-sm-6 col-xl-3">
+        <div class="card p-3 h-100 border-0 shadow-sm" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-muted text-uppercase" style="font-size: 0.72rem;">Goal Status</span>
+                <span class="fs-5">🏆</span>
+            </div>
+            <h3 class="mb-1 fw-bold" style="color: var(--dash-text);">
+                @Summary.CompletedGoals <span class="fs-6 fw-normal text-muted">of @Summary.TotalGoals completed</span>
+            </h3>
+            <div class="d-flex align-items-center justify-content-between mt-auto pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                <span class="text-muted small" style="font-size: 0.75rem;">@Summary.ActiveGoals active targets</span>
+                <span class="badge bg-info-subtle text-info small">@Summary.CompletedGoals Achieved</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Filter Tabs ─────────────────────────────────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div class="btn-group btn-group-sm">
+        <button type="button" class="btn @(ActiveTab == "All" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("All")'>
+            All Goals (@GoalItems.Count)
+        </button>
+        <button type="button" class="btn @(ActiveTab == "Active" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("Active")'>
+            ⚡ Active (@GoalItems.Count(g => g.Status == "Active"))
+        </button>
+        <button type="button" class="btn @(ActiveTab == "Completed" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("Completed")'>
+            🎉 Completed (@GoalItems.Count(g => g.Status == "Completed"))
+        </button>
+        <button type="button" class="btn @(ActiveTab == "Emergency" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetTab("Emergency")'>
+            🛡️ Emergency Funds (@GoalItems.Count(g => g.Category == "Emergency Fund"))
+        </button>
+    </div>
+</div>
+
+<!-- ── Goals Grid ──────────────────────────────────────────────────────────── -->
+@if (IsLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary mb-2" role="status"></div>
+        <p class="text-muted small">Loading financial goals & funds...</p>
+    </div>
+}
+else if (!FilteredGoals.Any())
+{
+    <div class="card border-0 shadow-sm p-5 text-center mb-4" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 16px;">
+        <div class="fs-1 mb-2">🎯</div>
+        <h4 class="fw-bold" style="color: var(--dash-text);">No Financial Goals Yet</h4>
+        <p class="text-muted small mb-4" style="max-width: 480px; margin: 0 auto;">
+            Sinking funds & savings goals help you save systematically for emergency reserves, dream vacations, vehicle upgrades, and festival expenses without touching your daily spending money.
+        </p>
+
+        <!-- Quick Goal Starters -->
+        <div class="d-flex justify-content-center gap-2 flex-wrap mb-4">
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickStartGoal("🛡️ 6-Month Emergency Fund", 150000, "Emergency Fund", "🛡️", "#ef4444")'>
+                🛡️ Emergency Fund
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickStartGoal("🏖️ Goa Family Vacation", 50000, "Travel", "🏖️", "#06b6d4")'>
+                🏖️ Vacation Fund
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickStartGoal("🚗 Vehicle Upgrade / Down Payment", 200000, "Purchase", "🚗", "#6366f1")'>
+                🚗 Vehicle Sinking Fund
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick='() => QuickStartGoal("💻 New Laptop / Workstation", 80000, "Gadget", "💻", "#8b5cf6")'>
+                💻 Gadget Savings
+            </button>
+        </div>
+
+        <div>
+            <button class="btn btn-primary" @onclick="OpenCreateModal">
+                ➕ Create Your First Goal
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var goal in FilteredGoals)
+        {
+            var progressPct = goal.TargetAmount > 0 ? Math.Min(100.0, (double)(goal.CurrentAmount / goal.TargetAmount * 100m)) : 0.0;
+            var isCompleted = goal.Status == "Completed" || goal.CurrentAmount >= goal.TargetAmount;
+            var remaining = Math.Max(0, goal.TargetAmount - goal.CurrentAmount);
+            var goalColor = string.IsNullOrWhiteSpace(goal.Colour) ? "var(--c-indigo, #6366f1)" : goal.Colour;
+            var owner = goal.MemberGlobalId.HasValue && MemberMap.TryGetValue(goal.MemberGlobalId.Value, out var m) ? m : null;
+
+            <div class="col-md-6 col-lg-4">
+                <div class="card h-100 shadow-sm border-0 position-relative goal-card"
+                     style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 14px; overflow: hidden; transition: transform 0.15s ease, box-shadow 0.15s ease;">
+                    
+                    <!-- Top accent colour bar -->
+                    <div style="height: 5px; background: @goalColor; width: 100%;"></div>
+
+                    <div class="card-body p-3 d-flex flex-column justify-content-between">
+                        <!-- Card Header -->
+                        <div class="d-flex align-items-start justify-content-between mb-3">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="goal-icon-box" style="background: @(goalColor)20; border: 1px solid @(goalColor)40; color: @goalColor;">
+                                    <span class="fs-4">@(string.IsNullOrWhiteSpace(goal.Icon) ? "🎯" : goal.Icon)</span>
+                                </div>
+                                <div>
+                                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text); font-size: 1.05rem;">
+                                        @goal.Name
+                                    </h5>
+                                    <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
+                                        @if (!string.IsNullOrWhiteSpace(goal.Category))
+                                        {
+                                            <span class="badge bg-secondary-subtle text-secondary small" style="font-size: 0.7rem;">
+                                                @goal.Category
+                                            </span>
+                                        }
+                                        @if (owner != null)
+                                        {
+                                            <span class="member-chip" style="background-color: @(owner.Colour ?? "#4f46e5"); font-size: 0.65rem; padding: 1px 6px;">
+                                                <span>@owner.Avatar</span>
+                                                <span>@owner.Name</span>
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Status Badge -->
+                            <div>
+                                @if (isCompleted)
+                                {
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1" style="font-size: 0.72rem;">
+                                        🎉 Completed
+                                    </span>
+                                }
+                                else if (goal.TargetDate.HasValue)
+                                {
+                                    var daysLeft = (goal.TargetDate.Value.Date - DateTime.Today).Days;
+                                    if (daysLeft < 0)
+                                    {
+                                        <span class="badge bg-danger-subtle text-danger px-2 py-1" style="font-size: 0.72rem;">
+                                            ⚠️ Past Target
+                                        </span>
+                                    }
+                                    else if (daysLeft <= 30)
+                                    {
+                                        <span class="badge bg-warning-subtle text-warning px-2 py-1" style="font-size: 0.72rem;">
+                                            ⏳ @daysLeft d left
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary-subtle text-secondary px-2 py-1" style="font-size: 0.72rem;">
+                                            📅 @goal.TargetDate.Value.ToString("MMM yyyy")
+                                        </span>
+                                    }
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Progress Banner & Balance -->
+                        <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="small text-muted fw-semibold text-uppercase" style="font-size: 0.7rem;">Current Saved</span>
+                                <span class="fw-bold small" style="color: @goalColor;">@progressPct.ToString("F1")%</span>
+                            </div>
+
+                            <div class="d-flex align-items-baseline gap-2 mb-2">
+                                <h3 class="fw-bold mb-0 text-success" style="font-variant-numeric: tabular-nums;">
+                                    ₹ @goal.CurrentAmount.ToString("N2")
+                                </h3>
+                                <span class="text-muted small">
+                                    of ₹ @goal.TargetAmount.ToString("N0")
+                                </span>
+                            </div>
+
+                            <!-- Progress Bar -->
+                            <div class="progress mb-2" style="height: 8px; border-radius: 4px; background: rgba(0,0,0,0.06);">
+                                <div class="progress-bar"
+                                     style="width: @progressPct%; background-color: @goalColor;"></div>
+                            </div>
+
+                            <!-- Remaining amount and Pace -->
+                            <div class="d-flex justify-content-between align-items-center small text-muted pt-1 border-top" style="border-color: var(--dash-border) !important; font-size: 0.75rem;">
+                                @if (isCompleted)
+                                {
+                                    <span class="text-success fw-semibold">🎯 Target Fully Reached!</span>
+                                }
+                                else
+                                {
+                                    <span>Remaining: <strong>₹ @remaining.ToString("N0")</strong></span>
+                                }
+
+                                @if (!isCompleted && goal.TargetDate.HasValue)
+                                {
+                                    var monthsLeft = ((goal.TargetDate.Value.Year - DateTime.Today.Year) * 12) + (goal.TargetDate.Value.Month - DateTime.Today.Month);
+                                    if (monthsLeft > 0)
+                                    {
+                                        var monthlyPace = remaining / monthsLeft;
+                                        <span class="text-primary fw-semibold" title="Save this much per month to reach target on time">
+                                            ₹@monthlyPace.ToString("N0")/mo
+                                        </span>
+                                    }
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Linked Bank Account (if any) & Notes -->
+                        @if (goal.BankAccount != null || !string.IsNullOrWhiteSpace(goal.Note))
+                        {
+                            <div class="d-flex align-items-center justify-content-between small text-muted mb-3 px-1">
+                                @if (goal.BankAccount != null)
+                                {
+                                    <span class="badge border small d-inline-flex align-items-center gap-1"
+                                          style="font-size: 0.7rem; background: @(goal.BankAccount.Colour ?? "#4f46e5")15; color: @(goal.BankAccount.Colour ?? "#4f46e5"); border-color: @(goal.BankAccount.Colour ?? "#4f46e5")30 !important;">
+                                        <span>@(goal.BankAccount.Icon ?? "🏦")</span>
+                                        <span>@goal.BankAccount.AccountName</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span></span>
+                                }
+
+                                @if (!string.IsNullOrWhiteSpace(goal.Note))
+                                {
+                                    <span class="text-truncate text-muted small" style="max-width: 160px;" title="@goal.Note">
+                                        📝 @goal.Note
+                                    </span>
+                                }
+                            </div>
+                        }
+
+                        <!-- Action Buttons -->
+                        <div class="d-flex gap-1 pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                            <button type="button" class="btn btn-sm btn-outline-success flex-fill py-1 px-1 fw-semibold"
+                                    @onclick="() => OpenContributeModal(goal, true)" title="Deposit money towards this goal">
+                                ＋ Deposit
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary flex-fill py-1 px-1"
+                                    @onclick="() => OpenContributeModal(goal, false)" title="Withdraw funds from this goal"
+                                    disabled="@(goal.CurrentAmount <= 0)">
+                                🔻 Withdraw
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary px-2"
+                                    @onclick="() => OpenHistoryModal(goal)" title="View Contributions History">
+                                📜
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary px-2"
+                                    @onclick="() => OpenEditModal(goal)" title="Edit Goal Details">
+                                ✏️
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger px-2"
+                                    @onclick="() => ConfirmDelete(goal)" title="Delete Goal">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<!-- ── Create / Edit Goal Modal ───────────────────────────────────────────── -->
+@if (ShowGoalModal)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseGoalModal"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 540px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                <span>@(EditingGoal.Id == 0 ? "🎯 New Financial Goal / Sinking Fund" : "✏️ Edit Goal")</span>
+            </h5>
+            <button type="button" class="btn-close" @onclick="CloseGoalModal"></button>
+        </div>
+        <div class="modal-panel-body">
+            @if (!string.IsNullOrEmpty(GoalModalError))
+            {
+                <div class="alert alert-danger py-2 px-3 small mb-3">
+                    @GoalModalError
+                </div>
+            }
+
+            <!-- 1. Goal Name -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Goal Name <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" placeholder="e.g. 6-Month Emergency Reserve, Vacation to Goa, Car Downpayment" @bind="EditingGoal.Name" maxlength="150" />
+            </div>
+
+            <!-- 2. Target Amount & Current Amount -->
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Target Amount (₹) <span class="text-danger">*</span></label>
+                    <input type="number" step="100" min="1" class="form-control" placeholder="100000" @bind="EditingGoal.TargetAmount" />
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Current Saved (₹)</label>
+                    <input type="number" step="100" min="0" class="form-control" placeholder="0" @bind="EditingGoal.CurrentAmount" disabled="@(EditingGoal.Id > 0)" />
+                    @if (EditingGoal.Id > 0)
+                    {
+                        <span class="text-muted small" style="font-size: 0.72rem;">Use + Deposit to adjust existing funds</span>
+                    }
+                </div>
+            </div>
+
+            <!-- 3. Category & Target Date -->
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Fund Category</label>
+                    <select class="form-select" @bind="EditingGoal.Category">
+                        <option value="Emergency Fund">🛡️ Emergency Fund</option>
+                        <option value="Travel">🏖️ Travel & Vacation</option>
+                        <option value="Purchase">🚗 Vehicle / Purchase</option>
+                        <option value="Gadget">💻 Gadgets & Electronics</option>
+                        <option value="Home">🏠 Home & Renovation</option>
+                        <option value="Education">🎓 Education & Kids</option>
+                        <option value="Festival">🪔 Festival & Gifts</option>
+                        <option value="Investment">📈 Wealth & Investment</option>
+                        <option value="Other">🎯 Other Goal</option>
+                    </select>
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Target Date (Optional)</label>
+                    <input type="date" class="form-control" @bind="EditingGoal.TargetDate" />
+                </div>
+            </div>
+
+            <!-- 4. Linked Bank Account (Physical storage) -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Linked Bank Account (Optional)</label>
+                <select class="form-select" @bind="EditingAccountString">
+                    <option value="">— Not linked to specific account (Virtual Allocation) —</option>
+                    @foreach (var acc in BankAccounts)
+                    {
+                        <option value="@acc.GlobalId">
+                            @acc.Icon @acc.AccountName @(!string.IsNullOrEmpty(acc.BankName) ? $"({acc.BankName})" : "")
+                        </option>
+                    }
+                </select>
+            </div>
+
+            <!-- 5. Profile Owner (Admin only) -->
+            @if (Session.CurrentUser?.Role == "Admin")
+            {
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Profile Owner</label>
+                    <select class="form-select" @bind="EditingMemberString">
+                        <option value="">👨‍👩‍👧‍👦 Family-Wide Goal</option>
+                        @foreach (var mem in FamilyMembers)
+                        {
+                            <option value="@mem.GlobalId">@mem.Avatar @mem.Name</option>
+                        }
+                    </select>
+                </div>
+            }
+
+            <!-- 6. Icon & Colour Palette -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Choose Icon & Colour</label>
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                    @foreach (var icon in QuickIcons)
+                    {
+                        <button type="button" class="btn btn-sm @(EditingGoal.Icon == icon ? "btn-primary" : "btn-outline-secondary") px-2"
+                                @onclick="() => EditingGoal.Icon = icon">
+                            @icon
+                        </button>
+                    }
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    @foreach (var col in QuickColours)
+                    {
+                        <button type="button" class="color-swatch-btn @(EditingGoal.Colour == col ? "selected" : "")"
+                                style="background-color: @col;"
+                                @onclick="() => EditingGoal.Colour = col"></button>
+                    }
+                </div>
+            </div>
+
+            <!-- 7. Notes / Remarks -->
+            <div class="mb-2">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Notes / Milestone Milestones</label>
+                <textarea class="form-control form-control-sm" rows="2" placeholder="e.g. Keep in Fixed Deposit earning 7.2% interest..." @bind="EditingGoal.Note"></textarea>
+            </div>
+        </div>
+        <div class="modal-panel-footer">
+            <button type="button" class="btn btn-outline-secondary" @onclick="CloseGoalModal">Cancel</button>
+            <button type="button" class="btn btn-primary fw-semibold" @onclick="SaveGoalAsync" disabled="@IsSaving">
+                @if (IsSaving)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    <span>Saving...</span>
+                }
+                else
+                {
+                    <span>✓ Save Goal</span>
+                }
+            </button>
+        </div>
+    </div>
+}
+
+<!-- ── Contribute (Deposit / Withdraw) Modal ───────────────────────────────── -->
+@if (TargetGoalForContribution != null)
+{
+    var isDeposit = ContributionIsDeposit;
+    var currentBal = TargetGoalForContribution.CurrentAmount;
+    var targetBal = TargetGoalForContribution.TargetAmount;
+    var newProjected = isDeposit ? currentBal + ContributionAmount : Math.Max(0, currentBal - ContributionAmount);
+    var newPct = targetBal > 0 ? Math.Min(100.0, (double)(newProjected / targetBal * 100m)) : 0.0;
+
+    <div class="modal-backdrop-custom" @onclick="CloseContributionModal"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 480px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                <span>@(isDeposit ? "💰 Deposit to Goal" : "🔻 Withdraw from Goal")</span>
+            </h5>
+            <button type="button" class="btn-close" @onclick="CloseContributionModal"></button>
+        </div>
+        <div class="modal-panel-body">
+            @if (!string.IsNullOrEmpty(ContributionError))
+            {
+                <div class="alert alert-danger py-2 px-3 small mb-3">
+                    @ContributionError
+                </div>
+            }
+
+            <!-- Target Goal Banner -->
+            <div class="p-3 mb-3 rounded-3 d-flex align-items-center gap-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <div class="goal-icon-box" style="background: @(TargetGoalForContribution.Colour ?? "#6366f1")20; color: @(TargetGoalForContribution.Colour ?? "#6366f1");">
+                    <span class="fs-4">@(TargetGoalForContribution.Icon ?? "🎯")</span>
+                </div>
+                <div>
+                    <h6 class="mb-0 fw-bold" style="color: var(--dash-text);">@TargetGoalForContribution.Name</h6>
+                    <span class="small text-muted">Currently saved: ₹@currentBal.ToString("N2") of ₹@targetBal.ToString("N0")</span>
+                </div>
+            </div>
+
+            <!-- Amount Input -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">
+                    @(isDeposit ? "Amount to Allocate / Deposit (₹)" : "Amount to Withdraw (₹)") <span class="text-danger">*</span>
+                </label>
+                <div class="amount-input-wrap mb-2">
+                    <span class="amount-currency">₹</span>
+                    <input type="number" step="100" min="1"
+                           class="form-control amount-input @(isDeposit ? "amount-input--income" : "")"
+                           placeholder="0.00"
+                           @bind="ContributionAmount"
+                           @bind:event="oninput"
+                           autofocus />
+                </div>
+
+                <!-- Quick Increment Chips -->
+                <div class="d-flex flex-wrap gap-1">
+                    <span class="small text-muted me-1 align-self-center">Quick:</span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => ContributionAmount += 1000">+₹1,000</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => ContributionAmount += 2000">+₹2,000</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => ContributionAmount += 5000">+₹5,000</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => ContributionAmount += 10000">+₹10,000</button>
+                    @if (!isDeposit)
+                    {
+                        <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 quick-chip" @onclick="() => ContributionAmount = currentBal">Max (All)</button>
+                    }
+                </div>
+            </div>
+
+            <!-- Source/Destination Bank Account -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">
+                    @(isDeposit ? "Paid from Bank Account (Optional)" : "Transferred to Bank Account (Optional)")
+                </label>
+                <select class="form-select" @bind="ContributionAccountString">
+                    <option value="">— None (Direct balance adjustment) —</option>
+                    @foreach (var acc in BankAccounts)
+                    {
+                        <option value="@acc.GlobalId">@acc.Icon @acc.AccountName</option>
+                    }
+                </select>
+            </div>
+
+            <!-- Date -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Transaction Date</label>
+                <input type="date" class="form-control" @bind="ContributionDate" />
+            </div>
+
+            <!-- Note / Memo -->
+            <div class="mb-3">
+                <label class="form-label small fw-semibold text-uppercase text-muted">Note / Remarks</label>
+                <input type="text" class="form-control form-control-sm" placeholder="e.g. Monthly salary savings portion, Festival bonus..." @bind="ContributionNote" />
+            </div>
+
+            <!-- Projected Balance Pill -->
+            <div class="p-2 rounded-2 text-center small" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border);">
+                <span class="text-muted">Updated Goal Balance:</span>
+                <strong class="ms-1 fs-6 @(isDeposit ? "text-success" : "text-dark")">₹ @newProjected.ToString("N2")</strong>
+                <span class="text-muted ms-1">(@newPct.ToString("F1")% of target)</span>
+            </div>
+        </div>
+        <div class="modal-panel-footer">
+            <button type="button" class="btn btn-outline-secondary" @onclick="CloseContributionModal">Cancel</button>
+            <button type="button" class="btn @(isDeposit ? "btn-success" : "btn-primary") fw-semibold"
+                    @onclick="SaveContributionAsync" disabled="@IsSaving">
+                @if (IsSaving)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    <span>Saving...</span>
+                }
+                else
+                {
+                    <span>✓ Confirm @(isDeposit ? "Deposit" : "Withdrawal")</span>
+                }
+            </button>
+        </div>
+    </div>
+}
+
+<!-- ── Goal Contribution History Modal ───────────────────────────────────── -->
+@if (GoalForHistory != null)
+{
+    <div class="modal-backdrop-custom" @onclick="() => GoalForHistory = null"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 580px;">
+        <div class="modal-panel-header">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-4">@(GoalForHistory.Icon ?? "🎯")</span>
+                <div>
+                    <h5 class="mb-0 fw-bold">@GoalForHistory.Name</h5>
+                    <span class="text-muted small">Fund Contribution Timeline</span>
+                </div>
+            </div>
+            <button type="button" class="btn-close" @onclick="() => GoalForHistory = null"></button>
+        </div>
+        <div class="modal-panel-body">
+            @if (!GoalForHistory.Contributions.Any())
+            {
+                <div class="text-center py-4 text-muted">
+                    <span class="fs-2 d-block mb-1">📜</span>
+                    <p class="mb-0 small">No contributions or withdrawals recorded yet.</p>
+                </div>
+            }
+            else
+            {
+                <div class="timeline-list">
+                    @foreach (var c in GoalForHistory.Contributions.OrderByDescending(x => x.TransactionDate))
+                    {
+                        var isDep = c.Type == "Deposit";
+                        <div class="d-flex justify-content-between align-items-center py-2 border-bottom" style="border-color: var(--dash-border) !important;">
+                            <div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge @(isDep ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")" style="font-size: 0.7rem;">
+                                        @(isDep ? "＋ Inflow" : "🔻 Outflow")
+                                    </span>
+                                    <strong style="color: var(--dash-text);">@(string.IsNullOrWhiteSpace(c.Note) ? (isDep ? "Contribution" : "Withdrawal") : c.Note)</strong>
+                                </div>
+                                <div class="text-muted small mt-1" style="font-size: 0.75rem;">
+                                    <span>@c.TransactionDate.ToString("dd MMM yyyy")</span>
+                                    @if (!string.IsNullOrEmpty(c.AccountName))
+                                    {
+                                        <span class="ms-1">via @c.AccountName</span>
+                                    }
+                                </div>
+                            </div>
+                            <span class="fw-bold fs-6 @(isDep ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                                @(isDep ? "+" : "-") ₹ @c.Amount.ToString("N2")
+                            </span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        <div class="modal-panel-footer">
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => GoalForHistory = null">Close</button>
+        </div>
+    </div>
+}
+
+<!-- ── Delete Confirmation Modal ──────────────────────────────────────────── -->
+@if (GoalToDelete != null)
+{
+    <div class="modal-backdrop-custom" @onclick="() => GoalToDelete = null"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 420px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold text-danger">⚠️ Confirm Delete</h5>
+            <button type="button" class="btn-close" @onclick="() => GoalToDelete = null"></button>
+        </div>
+        <div class="modal-panel-body">
+            <p style="color: var(--dash-text);">
+                Are you sure you want to delete goal <strong>@GoalToDelete.Name</strong>?
+            </p>
+            <div class="p-2 rounded-2 mb-2 text-center" style="background: var(--dash-surface-raised);">
+                <span class="fs-5 fw-bold text-success">Saved: ₹ @GoalToDelete.CurrentAmount.ToString("N2")</span>
+                <span class="text-muted small d-block">Target: ₹ @GoalToDelete.TargetAmount.ToString("N2")</span>
+            </div>
+            <p class="text-danger small mb-0">This will remove the goal and its contribution logs.</p>
+        </div>
+        <div class="modal-panel-footer">
+            <button class="btn btn-outline-secondary" @onclick="() => GoalToDelete = null">Cancel</button>
+            <button class="btn btn-danger fw-semibold" @onclick="ExecuteDeleteGoalAsync">
+                Yes, Delete
+            </button>
+        </div>
+    </div>
+}
+
+<style>
+    .goal-icon-box {
+        width: 46px;
+        height: 46px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .color-swatch-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        cursor: pointer;
+        transition: transform 0.1s ease;
+    }
+    .color-swatch-btn:hover {
+        transform: scale(1.15);
+    }
+    .color-swatch-btn.selected {
+        border-color: var(--dash-text);
+        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.4);
+    }
+    .quick-chip {
+        font-size: 0.75rem;
+        border-radius: 6px;
+    }
+    .amount-input-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+    .amount-currency {
+        position: absolute;
+        left: 1rem;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--dash-text-muted);
+        pointer-events: none;
+    }
+    .amount-input {
+        padding-left: 2.8rem !important;
+        font-size: 1.6rem !important;
+        font-weight: 700 !important;
+        height: 56px;
+        border-radius: 10px;
+        background: var(--dash-surface-raised) !important;
+        border: 2px solid var(--dash-border) !important;
+    }
+    .amount-input--income {
+        color: var(--c-emerald, #10b981) !important;
+    }
+    .modal-backdrop-custom {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 1040;
+        backdrop-filter: blur(3px);
+    }
+    .modal-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--dash-surface);
+        border: 1px solid var(--dash-border);
+        border-radius: 18px;
+        z-index: 1050;
+        width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        color: var(--dash-text);
+    }
+    .modal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.25rem 1.5rem;
+        border-bottom: 1px solid var(--dash-border);
+    }
+    .modal-panel-body {
+        padding: 1.5rem;
+        flex: 1;
+        overflow-y: auto;
+    }
+    .modal-panel-footer {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        padding: 1rem 1.5rem;
+        border-top: 1px solid var(--dash-border);
+    }
+    .animate-in {
+        animation: scaleUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes scaleUp {
+        from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+</style>
+
+@code {
+    private List<FinancialGoal> GoalItems = [];
+    private List<BankAccount> BankAccounts = [];
+    private List<FamilyMember> FamilyMembers = [];
+    private Dictionary<Guid, FamilyMember> MemberMap = [];
+    private ExpenseService.GoalsSummary Summary = new(0, 0, 0, 0, 0, 0, []);
+
+    private bool IsLoading = true;
+    private bool IsSaving = false;
+    private string ActiveTab = "All";
+    private string? SelectedMemberId;
+    private bool _showAllMembers = false;
+
+    // Modals
+    private bool ShowGoalModal = false;
+    private string? GoalModalError;
+    private FinancialGoal EditingGoal = new();
+    private string? EditingAccountString;
+    private string? EditingMemberString;
+
+    // Contribution Modal
+    private FinancialGoal? TargetGoalForContribution;
+    private bool ContributionIsDeposit = true;
+    private decimal ContributionAmount;
+    private DateTime ContributionDate = DateTime.Today;
+    private string? ContributionAccountString;
+    private string? ContributionNote;
+    private string? ContributionError;
+
+    // History Modal
+    private FinancialGoal? GoalForHistory;
+
+    // Delete Modal
+    private FinancialGoal? GoalToDelete;
+
+    private readonly List<string> QuickIcons = ["🎯", "🏖️", "🚗", "🛡️", "💻", "🏠", "💍", "🎓", "📱", "🚴", "👶", "✈️"];
+    private readonly List<string> QuickColours = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#14b8a6"];
+
+    private Guid? ActiveMemberFilter
+    {
+        get
+        {
+            if (Session.CurrentUser?.Role != "Admin")
+                return Session.CurrentUser?.GlobalId;
+
+            if (Guid.TryParse(SelectedMemberId, out var g))
+                return g;
+
+            return _showAllMembers ? null : Session.CurrentUser?.GlobalId;
+        }
+    }
+
+    private IEnumerable<FinancialGoal> FilteredGoals
+    {
+        get
+        {
+            var query = GoalItems.AsEnumerable();
+            if (ActiveTab == "Active") query = query.Where(g => g.Status == "Active");
+            else if (ActiveTab == "Completed") query = query.Where(g => g.Status == "Completed");
+            else if (ActiveTab == "Emergency") query = query.Where(g => g.Category == "Emergency Fund");
+            return query;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
+        MemberMap = FamilyMembers.ToDictionary(m => m.GlobalId);
+        _showAllMembers = false;
+        BankAccounts = await ExpenseService.GetBankAccountsAsync(ActiveMemberFilter);
+
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        IsLoading = true;
+        GoalItems = await ExpenseService.GetGoalsAsync(ActiveMemberFilter);
+        Summary = await ExpenseService.GetGoalsSummaryAsync(ActiveMemberFilter);
+        IsLoading = false;
+    }
+
+    private async Task SetViewMode(bool showAll)
+    {
+        _showAllMembers = showAll;
+        SelectedMemberId = null;
+        BankAccounts = await ExpenseService.GetBankAccountsAsync(ActiveMemberFilter);
+        await LoadDataAsync();
+    }
+
+    private async Task OnMemberFilterChanged()
+    {
+        if (string.IsNullOrEmpty(SelectedMemberId)) _showAllMembers = true;
+        else if (Guid.TryParse(SelectedMemberId, out var sg) && sg == Session.CurrentUser?.GlobalId) _showAllMembers = false;
+
+        BankAccounts = await ExpenseService.GetBankAccountsAsync(ActiveMemberFilter);
+        await LoadDataAsync();
+    }
+
+    private void SetTab(string tab)
+    {
+        ActiveTab = tab;
+    }
+
+    private void OpenCreateModal()
+    {
+        EditingGoal = new FinancialGoal
+        {
+            Colour = "#6366f1",
+            Icon = "🎯",
+            Category = "Emergency Fund",
+            Status = "Active"
+        };
+        EditingAccountString = null;
+        EditingMemberString = Session.CurrentUser?.Role == "Admin" ? SelectedMemberId : Session.CurrentUser?.GlobalId.ToString();
+        GoalModalError = null;
+        ShowGoalModal = true;
+    }
+
+    private void QuickStartGoal(string name, decimal target, string category, string icon, string color)
+    {
+        EditingGoal = new FinancialGoal
+        {
+            Name = name,
+            TargetAmount = target,
+            CurrentAmount = 0,
+            Category = category,
+            Icon = icon,
+            Colour = color,
+            Status = "Active"
+        };
+        EditingAccountString = null;
+        EditingMemberString = Session.CurrentUser?.Role == "Admin" ? SelectedMemberId : Session.CurrentUser?.GlobalId.ToString();
+        GoalModalError = null;
+        ShowGoalModal = true;
+    }
+
+    private void OpenEditModal(FinancialGoal goal)
+    {
+        EditingGoal = new FinancialGoal
+        {
+            Id = goal.Id,
+            GlobalId = goal.GlobalId,
+            Name = goal.Name,
+            TargetAmount = goal.TargetAmount,
+            CurrentAmount = goal.CurrentAmount,
+            TargetDate = goal.TargetDate,
+            Category = goal.Category,
+            Icon = goal.Icon,
+            Colour = goal.Colour,
+            Note = goal.Note,
+            Status = goal.Status,
+            MemberGlobalId = goal.MemberGlobalId,
+            AccountGlobalId = goal.AccountGlobalId
+        };
+        EditingAccountString = goal.AccountGlobalId?.ToString();
+        EditingMemberString = goal.MemberGlobalId?.ToString();
+        GoalModalError = null;
+        ShowGoalModal = true;
+    }
+
+    private void CloseGoalModal()
+    {
+        ShowGoalModal = false;
+        GoalModalError = null;
+    }
+
+    private async Task SaveGoalAsync()
+    {
+        GoalModalError = null;
+        if (string.IsNullOrWhiteSpace(EditingGoal.Name))
+        {
+            GoalModalError = "Please enter a name for this goal.";
+            return;
+        }
+
+        if (EditingGoal.TargetAmount <= 0)
+        {
+            GoalModalError = "Target amount must be greater than zero.";
+            return;
+        }
+
+        IsSaving = true;
+        try
+        {
+            if (Guid.TryParse(EditingAccountString, out var aId)) EditingGoal.AccountGlobalId = aId;
+            else EditingGoal.AccountGlobalId = null;
+
+            if (Guid.TryParse(EditingMemberString, out var mId)) EditingGoal.MemberGlobalId = mId;
+            else EditingGoal.MemberGlobalId = null;
+
+            if (EditingGoal.Id == 0)
+            {
+                await ExpenseService.CreateGoalAsync(EditingGoal, EditingGoal.MemberGlobalId);
+            }
+            else
+            {
+                await ExpenseService.UpdateGoalAsync(EditingGoal);
+            }
+
+            ShowGoalModal = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            GoalModalError = $"Failed to save goal: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void OpenContributeModal(FinancialGoal goal, bool isDeposit)
+    {
+        TargetGoalForContribution = goal;
+        ContributionIsDeposit = isDeposit;
+        ContributionAmount = isDeposit ? 1000m : Math.Min(1000m, goal.CurrentAmount);
+        ContributionDate = DateTime.Today;
+        ContributionAccountString = goal.AccountGlobalId?.ToString();
+        ContributionNote = null;
+        ContributionError = null;
+    }
+
+    private void CloseContributionModal()
+    {
+        TargetGoalForContribution = null;
+        ContributionError = null;
+    }
+
+    private async Task SaveContributionAsync()
+    {
+        ContributionError = null;
+        if (ContributionAmount <= 0)
+        {
+            ContributionError = "Please enter an amount greater than zero.";
+            return;
+        }
+
+        if (!ContributionIsDeposit && ContributionAmount > TargetGoalForContribution!.CurrentAmount)
+        {
+            ContributionError = $"Cannot withdraw more than current saved balance (₹{TargetGoalForContribution!.CurrentAmount:N2}).";
+            return;
+        }
+
+        IsSaving = true;
+        try
+        {
+            Guid? accId = Guid.TryParse(ContributionAccountString, out var aId) ? aId : null;
+
+            await ExpenseService.AddGoalContributionAsync(
+                TargetGoalForContribution!.GlobalId,
+                ContributionAmount,
+                ContributionIsDeposit ? "Deposit" : "Withdrawal",
+                ContributionNote,
+                accId,
+                ContributionDate
+            );
+
+            CloseContributionModal();
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            ContributionError = $"Failed to record contribution: {ex.Message}";
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private async Task OpenHistoryModal(FinancialGoal goal)
+    {
+        GoalForHistory = await ExpenseService.GetGoalAsync(goal.GlobalId);
+    }
+
+    private void ConfirmDelete(FinancialGoal goal)
+    {
+        GoalToDelete = goal;
+    }
+
+    private async Task ExecuteDeleteGoalAsync()
+    {
+        if (GoalToDelete != null)
+        {
+            await ExpenseService.DeleteGoalAsync(GoalToDelete.GlobalId);
+            GoalToDelete = null;
+            await LoadDataAsync();
+        }
+    }
+}

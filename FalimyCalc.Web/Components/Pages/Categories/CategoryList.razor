@@ -2,156 +2,788 @@
 @rendermode InteractiveServer
 @using FalimyCalc.Data.Entities
 @using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
 @inject ExpenseService ExpenseService
+@inject UserSessionService Session
+@inject NavigationManager Nav
 
-<PageTitle>Categories</PageTitle>
+<PageTitle>Categories & Budgets — FalimyCalc</PageTitle>
 
-<div class="dash-header mb-4">
+<!-- ── Page Header ─────────────────────────────────────────────────────────── -->
+<div class="dash-header mb-3">
     <div>
-        <h1 class="dash-title">Categories</h1>
-        <p class="dash-subtitle">Organize and color-code your spending categories</p>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="dash-title mb-0">Categories & Budgets</h1>
+            <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary fs-7 fw-semibold px-2 py-1">
+                @Categories.Count categories
+            </span>
+        </div>
+        <p class="dash-subtitle mt-1 mb-0">
+            @(Session.CurrentUser?.Role == "Admin"
+                ? "Organize family spending categories and track monthly budget limits"
+                : $"Organize categories and track your spending limits ({Session.CurrentUser?.Name})")
+        </p>
     </div>
-    <div>
-        <button class="btn-primary-glow border-0" @onclick="ShowAddForm">
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <button type="button" class="btn-primary-glow" @onclick="ShowAddForm">
             <span class="btn-icon">＋</span> Add Category
         </button>
     </div>
 </div>
 
-@if (IsLoading)
+<!-- ── Admin One-Tap Switcher (Me vs All Family) ───────────────────────────── -->
+@if (Session.CurrentUser?.Role == "Admin")
 {
-    <p><em>Loading...</em></p>
-}
-else
-{
-    <!-- Add / Edit inline form -->
-    @if (ShowForm)
-    {
-        <div class="card border-primary mb-4">
-            <div class="card-header">@(EditingCategory is null ? "New Category" : "Edit Category")</div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <label class="form-label">Name <span class="text-danger">*</span></label>
-                        <input class="form-control" @bind="FormName" placeholder="e.g. Groceries" maxlength="100" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Icon (emoji)</label>
-                        <input class="form-control" @bind="FormIcon" placeholder="🛒" maxlength="10" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Colour</label>
-                        <input type="color" class="form-control form-control-color w-100"
-                               @bind="FormColour" />
-                    </div>
-                    <div class="col-md-4 d-flex align-items-end gap-2">
-                        <button class="btn btn-primary" @onclick="SaveCategory" disabled="@IsSaving">
-                            @if (IsSaving) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                            Save
-                        </button>
-                        <button class="btn btn-outline-secondary" @onclick="HideForm">Cancel</button>
-                        @if (!string.IsNullOrEmpty(FormError))
-                        {
-                            <span class="text-danger small">@FormError</span>
-                        }
-                    </div>
-                </div>
-                <!-- Preview -->
-                @if (!string.IsNullOrWhiteSpace(FormName))
-                {
-                    <div class="mt-3">
-                        <span class="small text-muted me-2">Preview:</span>
-                        <span class="badge rounded-pill" style="background-color:@FormColour">
-                            @FormIcon @FormName
-                        </span>
-                    </div>
-                }
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+        <div class="d-flex align-items-center gap-2">
+            <span class="small fw-semibold text-muted">Quick View:</span>
+            <div class="view-toggle">
+                <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(true)">
+                    👨‍👩‍👧‍👦 All Family
+                </button>
+                <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(false)">
+                    @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                </button>
             </div>
         </div>
-    }
-
-    <!-- Category list -->
-    @if (!Categories.Any())
-    {
-        <p class="text-muted">No categories found.</p>
-    }
-    else
-    {
-        <div class="row g-3">
-            @foreach (var cat in Categories)
+        <div class="view-context-label mb-0">
+            @if (string.IsNullOrEmpty(SelectedMemberId))
             {
-                <div class="col-md-4 col-lg-3">
-                    <div class="card border-0 shadow-sm h-100">
-                        <div class="card-body d-flex align-items-center justify-content-between">
-                            <div class="d-flex align-items-center gap-2">
-                                <span class="badge rounded-pill fs-6"
-                                      style="background-color:@(cat.Colour ?? "#aaa")">
-                                    @cat.Icon
-                                </span>
-                                <span class="fw-semibold">@cat.Name</span>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-outline-primary"
-                                        @onclick="() => StartEdit(cat)">✏️</button>
-                                <button class="btn btn-sm btn-outline-danger"
-                                        @onclick="() => ConfirmDelete(cat)">🗑️</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                if (_showAllMembers)
+                {
+                    <span>👨‍👩‍👧‍👦 Tracking budget against <strong>all family</strong> expenses</span>
+                }
+                else
+                {
+                    <span>@Session.CurrentUser.Avatar Tracking budget for <strong>your (@Session.CurrentUser.Name)</strong> expenses only</span>
+                }
             }
-        </div>
-    }
-}
-
-<!-- Delete confirmation -->
-@if (CategoryToDelete is not null)
-{
-    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Confirm Delete</h5>
-                </div>
-                <div class="modal-body">
-                    Delete category <strong>@CategoryToDelete.Name</strong>?
-                    <p class="text-warning mt-2 mb-0">
-                        Expenses in this category will become uncategorised.
-                    </p>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
-                    <button class="btn btn-danger" @onclick="DeleteConfirmed">Delete</button>
-                </div>
-            </div>
         </div>
     </div>
 }
 
+<!-- ── Top KPI Stat Cards ──────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+    <!-- Total Monthly Budget -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-primary bg-opacity-10 text-primary">
+                🎯
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Total Budget</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--dash-text);">
+                    ₹ @TotalAllocatedBudget.ToString("N0")
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">Allocated for this month</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Total Spent This Month -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-info bg-opacity-10 text-info">
+                💳
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Spent This Month</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--c-rose, #f43f5e);">
+                    ₹ @TotalSpentThisMonth.ToString("N0")
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">@DateTime.Now.ToString("MMMM yyyy")</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Remaining Budget -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle @(RemainingBudget >= 0 ? "bg-success bg-opacity-10 text-success" : "bg-danger bg-opacity-10 text-danger")">
+                ⚖️
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Budget Balance</span>
+                <h3 class="mb-0 fw-bold @(RemainingBudget >= 0 ? "text-success" : "text-danger")">
+                    ₹ @Math.Abs(RemainingBudget).ToString("N0")
+                </h3>
+                <span class="badge @(RemainingBudget >= 0 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")" style="font-size: 0.72rem;">
+                    @(RemainingBudget >= 0 ? "✅ Under Budget" : "🚨 Over Budget")
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Category Health Overview -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-warning bg-opacity-10 text-warning">
+                📊
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Budget Health</span>
+                <div class="d-flex align-items-center gap-2 mt-1">
+                    @if (OverBudgetCount > 0)
+                    {
+                        <span class="badge bg-danger">@OverBudgetCount Over</span>
+                    }
+                    @if (NearLimitCount > 0)
+                    {
+                        <span class="badge bg-warning text-dark">@NearLimitCount Warning</span>
+                    }
+                    <span class="badge bg-success">@OnTrackCount Safe</span>
+                </div>
+                <span class="text-muted small d-block mt-1" style="font-size: 0.75rem;">@NoBudgetCount with no limit set</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Filter & Search Toolbar ─────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm mb-4" style="background: var(--dash-surface);">
+    <div class="card-body p-3">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <!-- Search Box -->
+            <div class="search-input-wrap flex-grow-1" style="max-width: 320px;">
+                <span class="search-icon">🔍</span>
+                <input type="text"
+                       class="form-control form-control-sm ps-5"
+                       placeholder="Search categories..."
+                       @bind="SearchText"
+                       @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(SearchText))
+                {
+                    <button type="button" class="btn-clear-search" @onclick="() => SearchText = string.Empty">✕</button>
+                }
+            </div>
+
+            <!-- Status Filter Pills -->
+            <div class="d-flex align-items-center gap-1 flex-wrap">
+                <button type="button"
+                        class="btn btn-sm @(ActiveStatusFilter == "all" ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick='() => ActiveStatusFilter = "all"'>
+                    All (@Categories.Count)
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveStatusFilter == "over" ? "btn-danger" : "btn-outline-danger")"
+                        @onclick='() => ActiveStatusFilter = "over"'>
+                    🚨 Over (@OverBudgetCount)
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveStatusFilter == "near" ? "btn-warning" : "btn-outline-warning")"
+                        @onclick='() => ActiveStatusFilter = "near"'>
+                    ⚠️ Near Limit (@NearLimitCount)
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveStatusFilter == "ontrack" ? "btn-success" : "btn-outline-success")"
+                        @onclick='() => ActiveStatusFilter = "ontrack"'>
+                    ✅ On Track (@OnTrackCount)
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveStatusFilter == "nobudget" ? "btn-secondary" : "btn-outline-secondary")"
+                        @onclick='() => ActiveStatusFilter = "nobudget"'>
+                    ⚪ No Budget (@NoBudgetCount)
+                </button>
+            </div>
+
+            <!-- Sort Selector -->
+            <div class="d-flex align-items-center gap-2">
+                <span class="small text-muted fw-semibold text-nowrap">Sort:</span>
+                <select class="form-select form-select-sm" style="width: 170px;" @bind="SelectedSort">
+                    <option value="name_asc">🔤 Name (A → Z)</option>
+                    <option value="spent_desc">💰 Highest Spent</option>
+                    <option value="budget_desc">🎯 Highest Budget</option>
+                    <option value="pct_desc">📈 % Used (High → Low)</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Categories Grid ─────────────────────────────────────────────────────── -->
+@if (IsLoading)
+{
+    <div class="skeleton-wrapper">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+    </div>
+}
+else if (!FilteredCategories.Any())
+{
+    <div class="card border-0 shadow-sm text-center py-5" style="background: var(--dash-surface);">
+        <div class="py-4">
+            <span class="fs-1 d-block mb-2">🔍</span>
+            <h5 class="fw-bold mb-1">No matching categories found</h5>
+            <p class="text-muted small mb-3">Try adjusting your search query or status filter.</p>
+            @if (!string.IsNullOrEmpty(SearchText) || ActiveStatusFilter != "all")
+            {
+                <button class="btn btn-outline-secondary btn-sm" @onclick="ResetFilters">Reset Filters</button>
+            }
+            else
+            {
+                <button class="btn btn-primary btn-sm" @onclick="ShowAddForm">Create Category</button>
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var cat in FilteredCategories)
+        {
+            var status = BudgetStatuses.TryGetValue(cat.GlobalId, out var s) ? s : null;
+            var spent = status?.Spent ?? 0m;
+            var budget = cat.MonthlyBudget;
+            var hasBudget = budget.HasValue && budget.Value > 0;
+            var budgetVal = budget.GetValueOrDefault();
+            var pct = (hasBudget && budgetVal > 0) ? (double)Math.Round(spent / budgetVal * 100, 1) : 0;
+            var isOver = hasBudget && spent > budgetVal;
+            var isNear = hasBudget && spent >= (budgetVal * 0.8m) && !isOver;
+            var remaining = budgetVal - spent;
+
+            <div class="col-md-6 col-lg-4">
+                <div class="card h-100 shadow-sm border-0 position-relative category-card" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 12px; overflow: hidden; transition: transform 0.15s ease, box-shadow 0.15s ease;">
+                    <!-- Accent bar at top based on category color -->
+                    <div style="height: 5px; background: @(cat.Colour ?? "var(--c-indigo)"); width: 100%;"></div>
+
+                    <div class="card-body d-flex flex-column justify-content-between p-3">
+                        <!-- Header: Icon, Name, and Quick Actions -->
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="category-icon-box" style="background: @(cat.Colour ?? "#6366f1")20; border: 1px solid @(cat.Colour ?? "#6366f1")40; color: @(cat.Colour ?? "#6366f1");">
+                                    <span class="fs-4">@(string.IsNullOrWhiteSpace(cat.Icon) ? "📁" : cat.Icon)</span>
+                                </div>
+                                <div>
+                                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text); font-size: 1.05rem;">@cat.Name</h5>
+                                    <span class="small text-muted">@DateTime.Now.ToString("MMMM yyyy")</span>
+                                </div>
+                            </div>
+                            <!-- Edit / Delete Buttons -->
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-secondary" title="Edit Category"
+                                        @onclick="() => StartEdit(cat)">
+                                    ✏️
+                                </button>
+                                <button type="button" class="btn btn-outline-danger" title="Delete Category"
+                                        @onclick="() => ConfirmDelete(cat)">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Budget & Spending Metrics -->
+                        <div class="mt-2 pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                            @if (hasBudget)
+                            {
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="small fw-semibold" style="color: var(--dash-text);">
+                                        ₹ @spent.ToString("N0") <span class="text-muted fw-normal">of ₹ @budgetVal.ToString("N0")</span>
+                                    </span>
+                                    @if (isOver)
+                                    {
+                                        <span class="badge bg-danger">🚨 +₹ @((spent - budgetVal).ToString("N0")) Over</span>
+                                    }
+                                    else if (isNear)
+                                    {
+                                        <span class="badge bg-warning text-dark">⚠️ @pct% used</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            ✅ @pct% used
+                                        </span>
+                                    }
+                                </div>
+
+                                <!-- Visual Progress Bar -->
+                                <div class="progress mb-2" style="height: 8px; border-radius: 4px; background: var(--dash-surface-raised);">
+                                    <div class="progress-bar @(isOver ? "bg-danger" : isNear ? "bg-warning" : "bg-primary")"
+                                         role="progressbar"
+                                         style="width: @Math.Min(pct, 100)%; transition: width 0.3s ease;"
+                                         aria-valuenow="@pct"
+                                         aria-valuemin="0"
+                                         aria-valuemax="100">
+                                    </div>
+                                </div>
+
+                                <div class="d-flex justify-content-between align-items-center small text-muted">
+                                    <span>
+                                        @(remaining >= 0 ? $"₹ {remaining:N0} left" : $"Over by ₹ {Math.Abs(remaining):N0}")
+                                    </span>
+                                    <a href="/expenses?categoryId=@cat.GlobalId" class="btn btn-link btn-sm p-0 text-decoration-none fw-semibold">
+                                        View Expenses →
+                                    </a>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="d-flex justify-content-between align-items-center py-1">
+                                    <span class="small text-muted">Spent: <strong style="color: var(--dash-text);">₹ @spent.ToString("N0")</strong></span>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-primary fw-semibold"
+                                                @onclick="() => StartEdit(cat)">
+                                            + Set Budget
+                                        </button>
+                                        <span class="text-muted">|</span>
+                                        <a href="/expenses?categoryId=@cat.GlobalId" class="btn btn-link btn-sm p-0 text-decoration-none text-muted">
+                                            Expenses →
+                                        </a>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<!-- ── Add / Edit Category Modal ───────────────────────────────────────────── -->
+@if (ShowForm)
+{
+    <div class="modal-backdrop-custom" @onclick="HideForm"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 520px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold">@(EditingCategory is null ? "✨ Add New Category" : "✏️ Edit Category")</h5>
+            <button type="button" class="btn-close" @onclick="HideForm"></button>
+        </div>
+        <div class="modal-panel-body">
+            @if (!string.IsNullOrEmpty(FormError))
+            {
+                <div class="alert alert-danger py-2 px-3 small mb-3">
+                    @FormError
+                </div>
+            }
+
+            <!-- Live Preview Pill -->
+            <div class="text-center p-3 mb-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <span class="text-muted small text-uppercase fw-semibold d-block mb-1">Live Category Preview</span>
+                <span class="badge rounded-pill px-3 py-2 fs-6 shadow-sm" style="background-color: @FormColour; color: white;">
+                    @(string.IsNullOrWhiteSpace(FormIcon) ? "📁" : FormIcon) @(string.IsNullOrWhiteSpace(FormName) ? "Category Name" : FormName)
+                </span>
+                @if (FormMonthlyBudget.HasValue && FormMonthlyBudget.Value > 0)
+                {
+                    <div class="small text-muted mt-2">
+                        Monthly Budget: <strong>₹ @FormMonthlyBudget.Value.ToString("N0")</strong>
+                    </div>
+                }
+            </div>
+
+            <div class="row g-3">
+                <!-- Name -->
+                <div class="col-12">
+                    <label class="form-label fw-semibold small">Category Name <span class="text-danger">*</span></label>
+                    <input class="form-control"
+                           placeholder="e.g. Groceries, Entertainment, Fuel"
+                           @bind="FormName"
+                           maxlength="100" />
+                </div>
+
+                <!-- Icon (Emoji) + Quick Emoji Chips -->
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label class="form-label fw-semibold small mb-0">Icon / Emoji</label>
+                        <span class="text-muted small">Pick a suggested emoji:</span>
+                    </div>
+                    <div class="input-group mb-2">
+                        <span class="input-group-text fs-5">@(string.IsNullOrWhiteSpace(FormIcon) ? "📁" : FormIcon)</span>
+                        <input class="form-control"
+                               placeholder="e.g. 🛒"
+                               @bind="FormIcon"
+                               maxlength="10" />
+                    </div>
+
+                    <!-- Popular Emojis Quick Picker -->
+                    <div class="d-flex flex-wrap gap-1 p-2 rounded-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                        @foreach (var emoji in PresetEmojis)
+                        {
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary p-1 px-2 border-0"
+                                    style="font-size: 1.1rem; border-radius: 6px;"
+                                    title="@emoji.Name"
+                                    @onclick="() => FormIcon = emoji.Icon">
+                                @emoji.Icon
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <!-- Colour + Quick Swatches -->
+                <div class="col-12">
+                    <label class="form-label fw-semibold small mb-1">Category Color</label>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <input type="color" class="form-control form-control-color" style="width: 50px; height: 38px;" @bind="FormColour" />
+                        <input type="text" class="form-control font-monospace" style="max-width: 120px;" @bind="FormColour" />
+                    </div>
+
+                    <!-- Preset Color Swatches -->
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var color in PresetColors)
+                        {
+                            <button type="button"
+                                    class="color-swatch-btn @(FormColour.Equals(color, StringComparison.OrdinalIgnoreCase) ? "selected" : "")"
+                                    style="background-color: @color;"
+                                    @onclick="() => FormColour = color"
+                                    title="@color">
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <!-- Monthly Budget (₹) + Quick Increments -->
+                <div class="col-12">
+                    <label class="form-label fw-semibold small mb-1">Monthly Budget (₹) <span class="text-muted fw-normal">(optional)</span></label>
+                    <div class="input-group mb-2">
+                        <span class="input-group-text">₹</span>
+                        <input type="number"
+                               step="100"
+                               min="0"
+                               class="form-control"
+                               placeholder="e.g. 10000"
+                               @bind="FormMonthlyBudget" />
+                    </div>
+
+                    <!-- Quick Budget Chips -->
+                    <div class="d-flex flex-wrap gap-1">
+                        <span class="small text-muted align-self-center me-1">Quick:</span>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormMonthlyBudget = 2000">₹2,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormMonthlyBudget = 5000">₹5,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormMonthlyBudget = 10000">₹10,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormMonthlyBudget = 15000">₹15,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormMonthlyBudget = 25000">₹25,000</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => FormMonthlyBudget = null">Clear</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-panel-footer">
+            <button type="button" class="btn btn-outline-secondary" @onclick="HideForm">Cancel</button>
+            <button type="button" class="btn btn-primary px-4" @onclick="SaveCategory" disabled="@IsSaving">
+                @if (IsSaving)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    <span>Saving...</span>
+                }
+                else
+                {
+                    <span>Save Category</span>
+                }
+            </button>
+        </div>
+    </div>
+}
+
+<!-- ── Delete Confirmation Modal ───────────────────────────────────────────── -->
+@if (CategoryToDelete is not null)
+{
+    <div class="modal-backdrop-custom" @onclick="CancelDelete"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 440px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold text-danger">⚠️ Delete Category</h5>
+            <button type="button" class="btn-close" @onclick="CancelDelete"></button>
+        </div>
+        <div class="modal-panel-body">
+            <p class="mb-2">
+                Are you sure you want to delete category:
+            </p>
+            <div class="p-3 rounded-3 text-center my-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <span class="badge rounded-pill px-3 py-2 fs-6" style="background-color: @(CategoryToDelete.Colour ?? "#4f46e5"); color: white;">
+                    @(string.IsNullOrWhiteSpace(CategoryToDelete.Icon) ? "📁" : CategoryToDelete.Icon) @CategoryToDelete.Name
+                </span>
+            </div>
+            <div class="alert alert-warning py-2 px-3 small mb-0">
+                <strong>Note:</strong> Existing expenses assigned to this category will not be deleted; they will simply become <em>Uncategorised</em>.
+            </div>
+        </div>
+        <div class="modal-panel-footer">
+            <button type="button" class="btn btn-outline-secondary" @onclick="CancelDelete">Cancel</button>
+            <button type="button" class="btn btn-danger px-4" @onclick="DeleteConfirmed">Delete Category</button>
+        </div>
+    </div>
+}
+
+<style>
+    .category-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08) !important;
+    }
+    .category-icon-box {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .stat-icon-circle {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.3rem;
+        flex-shrink: 0;
+    }
+    .search-input-wrap {
+        position: relative;
+    }
+    .search-input-wrap .search-icon {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0.6;
+        pointer-events: none;
+    }
+    .btn-clear-search {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: transparent;
+        border: none;
+        color: var(--dash-text-muted);
+        cursor: pointer;
+        font-size: 0.85rem;
+        padding: 2px 6px;
+    }
+    .color-swatch-btn {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        cursor: pointer;
+        padding: 0;
+        transition: transform 0.1s ease, border-color 0.1s ease;
+    }
+    .color-swatch-btn:hover {
+        transform: scale(1.15);
+    }
+    .color-swatch-btn.selected {
+        border-color: var(--dash-text);
+        box-shadow: 0 0 0 2px var(--dash-surface);
+    }
+    .modal-backdrop-custom {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(4px);
+        z-index: 1050;
+    }
+    .modal-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 92%;
+        background: var(--dash-surface);
+        border: 1px solid var(--dash-border);
+        border-radius: 14px;
+        z-index: 1060;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+    }
+    .modal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--dash-border);
+    }
+    .modal-panel-body {
+        padding: 1.25rem;
+        overflow-y: auto;
+    }
+    .modal-panel-footer {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        padding: 1rem 1.25rem;
+        border-top: 1px solid var(--dash-border);
+    }
+    .animate-in {
+        animation: scaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes scaleIn {
+        from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+</style>
+
 @code {
     private List<Category> Categories = [];
+    private Dictionary<Guid, ExpenseService.CategoryBudgetStatus> BudgetStatuses = [];
     private bool IsLoading = true;
     private bool ShowForm = false;
     private bool IsSaving = false;
     private string? FormError;
 
+    // Filters & Search
+    private string SearchText = string.Empty;
+    private string ActiveStatusFilter = "all";
+    private string SelectedSort = "name_asc";
+
+    // Admin view toggle
+    private bool _showAllMembers = true;
+    private string? SelectedMemberId;
+
     // Form fields
     private string FormName = string.Empty;
     private string FormIcon = string.Empty;
-    private string FormColour = "#4ECDC4";
+    private string FormColour = "#6366f1";
+    private decimal? FormMonthlyBudget;
 
     private Category? EditingCategory;
     private Category? CategoryToDelete;
 
+    // Preset Emojis & Colors
+    private record EmojiPreset(string Icon, string Name);
+    private readonly List<EmojiPreset> PresetEmojis =
+    [
+        new("🛒", "Groceries"),
+        new("🍔", "Dining"),
+        new("🚗", "Transport / Fuel"),
+        new("⚡", "Utilities"),
+        new("🏠", "Housing / Rent"),
+        new("💊", "Health & Pharmacy"),
+        new("🎬", "Entertainment"),
+        new("🛍️", "Shopping"),
+        new("✈️", "Travel"),
+        new("🎓", "Education"),
+        new("🎁", "Gifts"),
+        new("💼", "Work"),
+        new("🐾", "Pets"),
+        new("📱", "Phone & Internet"),
+        new("🏋️", "Fitness"),
+        new("👶", "Baby / Kids"),
+        new("☕", "Coffee / Snacks"),
+        new("🎮", "Games & Hobbies")
+    ];
+
+    private readonly List<string> PresetColors =
+    [
+        "#6366f1", // Indigo
+        "#10b981", // Emerald
+        "#f43f5e", // Rose
+        "#f59e0b", // Amber
+        "#06b6d4", // Cyan
+        "#3b82f6", // Blue
+        "#a855f7", // Purple
+        "#ec4899", // Pink
+        "#f97316", // Orange
+        "#14b8a6"  // Teal
+    ];
+
+    private Guid? ActiveMemberFilter
+    {
+        get
+        {
+            if (Session.CurrentUser?.Role != "Admin")
+                return Session.CurrentUser?.GlobalId;
+
+            if (Guid.TryParse(SelectedMemberId, out var g))
+                return g;
+
+            return _showAllMembers ? null : Session.CurrentUser?.GlobalId;
+        }
+    }
+
+    // Computed KPI Metrics
+    private decimal TotalAllocatedBudget => Categories.Where(c => c.MonthlyBudget.HasValue).Sum(c => c.MonthlyBudget!.Value);
+    private decimal TotalSpentThisMonth => BudgetStatuses.Values.Sum(s => s.Spent);
+    private decimal RemainingBudget => TotalAllocatedBudget - TotalSpentThisMonth;
+
+    private int OverBudgetCount => BudgetStatuses.Values.Count(s => s.IsOverBudget);
+    private int NearLimitCount => BudgetStatuses.Values.Count(s => s.IsNearLimit);
+    private int OnTrackCount => Categories.Count(c =>
+    {
+        if (!c.MonthlyBudget.HasValue || c.MonthlyBudget.Value == 0) return false;
+        return BudgetStatuses.TryGetValue(c.GlobalId, out var s) && !s.IsOverBudget && !s.IsNearLimit;
+    });
+    private int NoBudgetCount => Categories.Count(c => !c.MonthlyBudget.HasValue || c.MonthlyBudget.Value == 0);
+
+    // Filtered & Sorted Categories
+    private IEnumerable<Category> FilteredCategories
+    {
+        get
+        {
+            var query = Categories.AsEnumerable();
+
+            // Search Filter
+            if (!string.IsNullOrWhiteSpace(SearchText))
+            {
+                var term = SearchText.Trim();
+                query = query.Where(c => c.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                      || (!string.IsNullOrEmpty(c.Icon) && c.Icon.Contains(term, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            // Status Filter
+            switch (ActiveStatusFilter)
+            {
+                case "over":
+                    query = query.Where(c => BudgetStatuses.TryGetValue(c.GlobalId, out var s) && s.IsOverBudget);
+                    break;
+                case "near":
+                    query = query.Where(c => BudgetStatuses.TryGetValue(c.GlobalId, out var s) && s.IsNearLimit);
+                    break;
+                case "ontrack":
+                    query = query.Where(c => c.MonthlyBudget.HasValue && c.MonthlyBudget.Value > 0
+                                         && BudgetStatuses.TryGetValue(c.GlobalId, out var s)
+                                         && !s.IsOverBudget && !s.IsNearLimit);
+                    break;
+                case "nobudget":
+                    query = query.Where(c => !c.MonthlyBudget.HasValue || c.MonthlyBudget.Value == 0);
+                    break;
+            }
+
+            // Sorting
+            query = SelectedSort switch
+            {
+                "spent_desc" => query.OrderByDescending(c => BudgetStatuses.TryGetValue(c.GlobalId, out var s) ? s.Spent : 0m),
+                "budget_desc" => query.OrderByDescending(c => c.MonthlyBudget ?? 0m),
+                "pct_desc" => query.OrderByDescending(c => BudgetStatuses.TryGetValue(c.GlobalId, out var s) ? s.PercentUsed : 0),
+                _ => query.OrderBy(c => c.Name)
+            };
+
+            return query;
+        }
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        if (Session.CurrentUser?.Role != "Admin")
+        {
+            _showAllMembers = false;
+        }
         await LoadCategories();
+    }
+
+    private async Task SetViewMode(bool showAll)
+    {
+        _showAllMembers = showAll;
+        SelectedMemberId = null;
+        await LoadCategories();
+    }
+
+    private void ResetFilters()
+    {
+        SearchText = string.Empty;
+        ActiveStatusFilter = "all";
     }
 
     private async Task LoadCategories()
     {
         IsLoading = true;
         Categories = await ExpenseService.GetCategoriesAsync();
+        var statuses = await ExpenseService.GetCategoryBudgetStatusesAsync(DateTime.Today.Year, DateTime.Today.Month, ActiveMemberFilter);
+        BudgetStatuses = statuses.ToDictionary(s => s.CategoryId);
         IsLoading = false;
     }
 
@@ -159,8 +791,9 @@ else
     {
         EditingCategory = null;
         FormName = string.Empty;
-        FormIcon = string.Empty;
-        FormColour = "#4ECDC4";
+        FormIcon = "🛒";
+        FormColour = "#6366f1";
+        FormMonthlyBudget = null;
         FormError = null;
         ShowForm = true;
     }
@@ -169,8 +802,9 @@ else
     {
         EditingCategory = cat;
         FormName = cat.Name;
-        FormIcon = cat.Icon ?? string.Empty;
-        FormColour = cat.Colour ?? "#4ECDC4";
+        FormIcon = cat.Icon ?? "📁";
+        FormColour = cat.Colour ?? "#6366f1";
+        FormMonthlyBudget = cat.MonthlyBudget;
         FormError = null;
         ShowForm = true;
     }
@@ -188,7 +822,7 @@ else
 
         if (string.IsNullOrWhiteSpace(FormName))
         {
-            FormError = "Name is required.";
+            FormError = "Category name is required.";
             return;
         }
 
@@ -202,7 +836,8 @@ else
                 {
                     Name = FormName.Trim(),
                     Icon = string.IsNullOrWhiteSpace(FormIcon) ? null : FormIcon.Trim(),
-                    Colour = FormColour
+                    Colour = FormColour,
+                    MonthlyBudget = FormMonthlyBudget
                 });
             }
             else
@@ -212,7 +847,8 @@ else
                     GlobalId = EditingCategory.GlobalId,
                     Name = FormName.Trim(),
                     Icon = string.IsNullOrWhiteSpace(FormIcon) ? null : FormIcon.Trim(),
-                    Colour = FormColour
+                    Colour = FormColour,
+                    MonthlyBudget = FormMonthlyBudget
                 });
             }
 
@@ -221,7 +857,7 @@ else
         }
         catch (Exception ex)
         {
-            FormError = $"Failed to save: {ex.Message}";
+            FormError = $"Failed to save category: {ex.Message}";
         }
         finally
         {

@@ -2,179 +2,1088 @@
 @rendermode InteractiveServer
 @using FalimyCalc.Data.Entities
 @using FalimyCalc.Data.Services
+@using FalimyCalc.Web.Services
 @inject ExpenseService ExpenseService
+@inject ExportService ExportService
+@inject UserSessionService Session
+@inject IJSRuntime JS
 @inject NavigationManager Nav
 
-<PageTitle>Expenses</PageTitle>
+<PageTitle>Expenses — FalimyCalc</PageTitle>
 
-<div class="dash-header mb-4">
+<!-- ── Page Header ─────────────────────────────────────────────────────────── -->
+<div class="dash-header mb-3">
     <div>
-        <h1 class="dash-title">Expenses</h1>
-        <p class="dash-subtitle">Manage, filter, and review family transactions</p>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="dash-title mb-0">Expenses</h1>
+            <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary fs-7 fw-semibold px-2 py-1">
+                @TotalCount transactions
+            </span>
+        </div>
+        <p class="dash-subtitle mt-1 mb-0">
+            @(Session.CurrentUser?.Role == "Admin"
+                ? "Manage, filter, and track all family transactions"
+                : $"Manage and track your personal expenses ({Session.CurrentUser?.Name})")
+        </p>
     </div>
-    <div>
-        <a href="/expenses/add" class="btn-primary-glow">
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <!-- Export Dropdown -->
+        <div class="btn-group">
+            <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" disabled="@IsExporting">
+                @if (IsExporting)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    <span>Exporting...</span>
+                }
+                else
+                {
+                    <span>📥 Export</span>
+                }
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                <li><button class="dropdown-item" @onclick="ExportToExcel">📊 Export as Excel (.xlsx)</button></li>
+                <li><button class="dropdown-item" @onclick="ExportToCsv">📄 Export as CSV</button></li>
+            </ul>
+        </div>
+
+        <!-- Import Button -->
+        <button type="button" class="btn btn-outline-primary" @onclick="OpenImportModal">
+            <span>📤 Import Excel</span>
+        </button>
+
+        <!-- Add Transaction Actions -->
+        <a href="/expenses/add?type=income" class="btn btn-outline-success d-inline-flex align-items-center gap-1 shadow-sm">
+            <span>📈</span> <span>Add Income</span>
+        </a>
+        <a href="/expenses/add?type=transfer" class="btn btn-outline-primary d-inline-flex align-items-center gap-1 shadow-sm">
+            <span>🔁</span> <span>Transfer</span>
+        </a>
+        <a href="/expenses/add?type=expense" class="btn-primary-glow">
             <span class="btn-icon">＋</span> Add Expense
         </a>
     </div>
 </div>
 
-<!-- Filters -->
-<div class="row g-2 mb-3">
-    <div class="col-md-4">
-        <input class="form-control" placeholder="Search description..."
-               @bind="SearchTerm" @bind:event="oninput" @onkeyup="OnSearchChanged" />
-    </div>
-    <div class="col-md-3">
-        <select class="form-select" @bind="SelectedCategoryId" @bind:after="LoadExpenses">
-            <option value="">All Categories</option>
-            @foreach (var cat in Categories)
-            {
-                <option value="@cat.GlobalId">@cat.Icon @cat.Name</option>
-            }
-        </select>
-    </div>
-    <div class="col-md-2">
-        <input type="date" class="form-control" @bind="FromDate" @bind:after="LoadExpenses" />
-    </div>
-    <div class="col-md-2">
-        <input type="date" class="form-control" @bind="ToDate" @bind:after="LoadExpenses" />
-    </div>
-    <div class="col-md-1">
-        <button class="btn btn-outline-secondary w-100" @onclick="ClearFilters">Clear</button>
-    </div>
-</div>
-
-<!-- Summary bar -->
-@if (TotalCount > 0)
+<!-- ── Admin One-Tap Switcher (Me vs All Family) ───────────────────────────── -->
+@if (Session.CurrentUser?.Role == "Admin")
 {
-    <div class="alert alert-info py-2">
-        Showing <strong>@Expenses.Count</strong> of <strong>@TotalCount</strong> expenses
-        &nbsp;|&nbsp; Page total: <strong>₹ @Expenses.Sum(e => e.Amount).ToString("N2")</strong>
-    </div>
-}
-
-<!-- Expense table -->
-@if (IsLoading)
-{
-    <p><em>Loading...</em></p>
-}
-else if (!Expenses.Any())
-{
-    <div class="text-center text-muted mt-5">
-        <p>No expenses found.</p>
-        <a href="/expenses/add" class="btn btn-outline-primary">Add your first expense</a>
-    </div>
-}
-else
-{
-    <div class="table-responsive">
-        <table class="table table-hover">
-            <thead class="table-light">
-                <tr>
-                    <th>Date</th>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th class="text-end">Amount</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var expense in Expenses)
-                {
-                    <tr>
-                        <td>@expense.TransactionDate.ToString("dd MMM yyyy")</td>
-                        <td>@expense.Description</td>
-                        <td>
-                            @if (expense.Category is not null)
-                            {
-                                <span class="badge rounded-pill"
-                                      style="background-color: @(expense.Category.Colour ?? "#aaa")">
-                                    @expense.Category.Icon @expense.Category.Name
-                                </span>
-                            }
-                            else
-                            {
-                                <span class="text-muted">—</span>
-                            }
-                        </td>
-                        <td class="text-end fw-semibold">₹ @expense.Amount.ToString("N2")</td>
-                        <td class="text-end">
-                            <a href="/expenses/edit/@expense.GlobalId" class="btn btn-sm btn-outline-primary me-1">Edit</a>
-                            <button class="btn btn-sm btn-outline-danger"
-                                    @onclick="() => ConfirmDelete(expense)">Delete</button>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Pagination -->
-    @if (TotalPages > 1)
-    {
-        <nav>
-            <ul class="pagination justify-content-center">
-                <li class="page-item @(CurrentPage == 1 ? "disabled" : "")">
-                    <button class="page-link" @onclick="() => GoToPage(CurrentPage - 1)">‹</button>
-                </li>
-                @for (int p = 1; p <= TotalPages; p++)
-                {
-                    var pageNum = p;
-                    <li class="page-item @(pageNum == CurrentPage ? "active" : "")">
-                        <button class="page-link" @onclick="() => GoToPage(pageNum)">@pageNum</button>
-                    </li>
-                }
-                <li class="page-item @(CurrentPage == TotalPages ? "disabled" : "")">
-                    <button class="page-link" @onclick="() => GoToPage(CurrentPage + 1)">›</button>
-                </li>
-            </ul>
-        </nav>
-    }
-}
-
-<!-- Delete confirmation modal -->
-@if (ExpenseToDelete is not null)
-{
-    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Confirm Delete</h5>
-                </div>
-                <div class="modal-body">
-                    <p>Delete <strong>@ExpenseToDelete.Description</strong> (₹ @ExpenseToDelete.Amount.ToString("N2"))?</p>
-                    <p class="text-danger mb-0">This action cannot be undone.</p>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
-                    <button class="btn btn-danger" @onclick="DeleteConfirmed">Delete</button>
-                </div>
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+        <div class="d-flex align-items-center gap-2">
+            <span class="small fw-semibold text-muted">Quick View:</span>
+            <div class="view-toggle">
+                <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(false)">
+                    @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                </button>
+                <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                        @onclick="() => SetViewMode(true)">
+                    👨‍👩‍👧‍👦 All Family
+                </button>
             </div>
+        </div>
+        <div class="view-context-label mb-0">
+            @if (string.IsNullOrEmpty(SelectedMemberId))
+            {
+                if (_showAllMembers)
+                {
+                    <span>👨‍👩‍👧‍👦 Showing <strong>all family</strong> transactions</span>
+                }
+                else
+                {
+                    <span>@Session.CurrentUser.Avatar Showing only <strong>your (@Session.CurrentUser.Name)</strong> transactions</span>
+                }
+            }
+            else if (Guid.TryParse(SelectedMemberId, out var selectedGuid) && MemberMap.TryGetValue(selectedGuid, out var selMem))
+            {
+                <span>@selMem.Avatar Filtered by <strong>@selMem.Name</strong>'s transactions</span>
+            }
         </div>
     </div>
 }
 
+<!-- ── Top KPI Stat Cards ──────────────────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+    <!-- Total Spending -->
+    <div class="col-sm-6 col-lg-4">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-primary bg-opacity-10 text-primary">
+                💳
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Total Spending</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--dash-text);">
+                    ₹ @TotalAmount.ToString("N2")
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">Across filtered records</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Total Transactions -->
+    <div class="col-sm-6 col-lg-4">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-info bg-opacity-10 text-info">
+                📑
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Transactions</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--dash-text);">
+                    @TotalCount
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">Page @CurrentPage of @(TotalPages == 0 ? 1 : TotalPages)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Average Expense -->
+    <div class="col-sm-12 col-lg-4">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+            <div class="stat-icon-circle bg-warning bg-opacity-10 text-warning">
+                📊
+            </div>
+            <div>
+                <span class="text-muted small fw-semibold d-block">Average per Expense</span>
+                <h3 class="mb-0 fw-bold" style="color: var(--dash-text);">
+                    ₹ @(TotalCount > 0 ? (TotalAmount / TotalCount).ToString("N2") : "0.00")
+                </h3>
+                <span class="text-muted small" style="font-size: 0.75rem;">Avg ticket size</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Quick Date Range Pills & Filter Actions ────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div class="d-flex align-items-center gap-1 flex-wrap">
+        <span class="text-muted small fw-semibold me-1">Quick Dates:</span>
+        <button type="button" class="btn btn-sm @(ActiveDatePreset == "all" ? "btn-primary" : "btn-outline-secondary") rounded-pill px-3"
+                @onclick='() => SetQuickDateRange("all")'>
+            All Time
+        </button>
+        <button type="button" class="btn btn-sm @(ActiveDatePreset == "this_month" ? "btn-primary" : "btn-outline-secondary") rounded-pill px-3"
+                @onclick='() => SetQuickDateRange("this_month")'>
+            This Month
+        </button>
+        <button type="button" class="btn btn-sm @(ActiveDatePreset == "last_month" ? "btn-primary" : "btn-outline-secondary") rounded-pill px-3"
+                @onclick='() => SetQuickDateRange("last_month")'>
+            Last Month
+        </button>
+        <button type="button" class="btn btn-sm @(ActiveDatePreset == "last_30" ? "btn-primary" : "btn-outline-secondary") rounded-pill px-3"
+                @onclick='() => SetQuickDateRange("last_30")'>
+            Last 30 Days
+        </button>
+        <button type="button" class="btn btn-sm @(ActiveDatePreset == "this_year" ? "btn-primary" : "btn-outline-secondary") rounded-pill px-3"
+                @onclick='() => SetQuickDateRange("this_year")'>
+            This Year
+        </button>
+    </div>
+
+    @if (IsFiltered)
+    {
+        <button type="button" class="btn btn-sm btn-outline-danger d-flex align-items-center gap-1 px-3 rounded-pill"
+                @onclick="ClearFilters" title="Reset all applied filters">
+            <span>✕</span>
+            <span>Reset All Filters</span>
+        </button>
+    }
+</div>
+
+<!-- ── Main Filter Bar ────────────────────────────────────────────────────── -->
+<div class="card p-3 mb-3 border-0 shadow-sm" style="background: var(--dash-surface);">
+    <div class="row g-2 align-items-center">
+        <!-- Search Input with Custom Instant Clear -->
+        <div class="col-lg-3 col-md-6">
+            <div class="search-input-wrap">
+                <span class="search-icon">🔍</span>
+                <input class="form-control ps-5 pe-4"
+                       placeholder="Search description, notes, tags..."
+                       @bind="SearchTerm"
+                       @bind:event="oninput"
+                       @onkeyup="OnSearchChanged" />
+                @if (!string.IsNullOrEmpty(SearchTerm))
+                {
+                    <button type="button" class="btn-clear-search" @onclick="ClearSearch" title="Clear search text">✕</button>
+                }
+            </div>
+        </div>
+
+        <!-- Transaction Type Dropdown -->
+        <div class="col-lg-2 col-md-6">
+            <select class="form-select" @bind="SelectedTransactionType" @bind:after="OnFilterChanged">
+                <option value="all">⚡ All Types</option>
+                <option value="expense">💸 Expenses</option>
+                <option value="income">📈 Income</option>
+                <option value="transfer">🔁 Transfers</option>
+            </select>
+        </div>
+
+        <!-- Category Dropdown -->
+        <div class="col-lg-2 col-md-6">
+            <select class="form-select" @bind="SelectedCategoryId" @bind:after="OnFilterChanged">
+                <option value="">📁 All Categories</option>
+                @foreach (var cat in Categories)
+                {
+                    <option value="@cat.GlobalId">@cat.Icon @cat.Name</option>
+                }
+            </select>
+        </div>
+
+        <!-- Bank Account Dropdown -->
+        <div class="col-lg-2 col-md-6">
+            <select class="form-select" @bind="SelectedAccountId" @bind:after="OnFilterChanged">
+                <option value="">🏦 All Accounts</option>
+                @foreach (var acc in BankAccounts)
+                {
+                    <option value="@acc.GlobalId">@(acc.Icon ?? "🏦") @acc.AccountName</option>
+                }
+            </select>
+        </div>
+
+        <!-- Profile Dropdown (Admin only) -->
+        @if (Session.CurrentUser?.Role == "Admin")
+        {
+            <div class="col-lg-2 col-md-6">
+                <select class="form-select" @bind="SelectedMemberId" @bind:after="OnMemberFilterChanged">
+                    <option value="">👥 All Profiles</option>
+                    @foreach (var member in FamilyMembers)
+                    {
+                        <option value="@member.GlobalId">@member.Avatar @member.Name (@member.Role)</option>
+                    }
+                </select>
+            </div>
+        }
+
+        <!-- Sort By -->
+        <div class="@(Session.CurrentUser?.Role == "Admin" ? "col-lg-3 col-md-6" : "col-lg-5 col-md-6")">
+            <select class="form-select" @bind="SelectedSortBy" @bind:after="OnFilterChanged">
+                <option value="date_desc">📅 Newest Date</option>
+                <option value="date_asc">📅 Oldest Date</option>
+                <option value="amount_desc">💰 Highest Amount</option>
+                <option value="amount_asc">💰 Lowest Amount</option>
+                <option value="desc_asc">🔤 Description (A-Z)</option>
+            </select>
+        </div>
+
+        <!-- Custom Date Range & Inline Clear Button -->
+        <div class="col-12 mt-2 pt-2 border-top">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="text-muted small fw-semibold">Date Range:</span>
+                    <input type="date" class="form-control form-control-sm" style="width: auto;" title="From date" @bind="FromDate" @bind:after="OnCustomDateChanged" />
+                    <span class="text-muted small">to</span>
+                    <input type="date" class="form-control form-control-sm" style="width: auto;" title="To date" @bind="ToDate" @bind:after="OnCustomDateChanged" />
+                </div>
+                @if (IsFiltered)
+                {
+                    <button type="button" class="btn btn-sm btn-outline-danger px-3 rounded-pill d-flex align-items-center gap-1"
+                            @onclick="ClearFilters" title="Reset all filters">
+                        <span>↺</span>
+                        <span>Clear All Filters</span>
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Expense Table Card ─────────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm overflow-hidden mb-3">
+    @if (IsLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary mb-2" role="status"></div>
+            <p class="text-muted small">Loading transactions...</p>
+        </div>
+    }
+    else if (!Expenses.Any())
+    {
+        <div class="text-center py-5 px-3">
+            <div class="fs-1 mb-2">🔍</div>
+            <h5 class="fw-bold" style="color: var(--dash-text);">No expenses found</h5>
+            <p class="text-muted small mb-3">
+                @(IsFiltered
+                    ? "No transactions match your current search and filter criteria."
+                    : "No expenses have been recorded yet. Add your first expense to get started!")
+            </p>
+            @if (IsFiltered)
+            {
+                <button class="btn btn-outline-primary btn-sm me-2" @onclick="ClearFilters">
+                    Reset All Filters
+                </button>
+            }
+            <a href="/expenses/add" class="btn btn-primary btn-sm">
+                ＋ Add New Expense
+            </a>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead style="background: var(--dash-surface-raised);">
+                    <tr>
+                        <th style="width: 140px;">Date</th>
+                        <th>Description & Details</th>
+                        <th style="width: 180px;">Category</th>
+                        @if (Session.CurrentUser?.Role == "Admin")
+                        {
+                            <th style="width: 150px;">Profile</th>
+                        }
+                        <th class="text-end" style="width: 150px;">Amount</th>
+                        <th class="text-end" style="width: 150px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var expense in Expenses)
+                    {
+                        <tr class="expense-row" @onclick="() => ViewExpenseDetails(expense)">
+                            <!-- Date -->
+                            <td>
+                                <div class="fw-semibold text-nowrap" style="color: var(--dash-text);">
+                                    @expense.TransactionDate.ToString("dd MMM yyyy")
+                                </div>
+                                <span class="text-muted small" style="font-size: 0.75rem;">
+                                    @expense.TransactionDate.ToString("dddd")
+                                </span>
+                            </td>
+
+                            <!-- Description with notes / subcategory / tags -->
+                            <td>
+                                <div class="d-flex align-items-center gap-2">
+                                    @if (ExpenseService.IsTransferTransaction(expense))
+                                    {
+                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.72rem;">
+                                            🔁 Transfer
+                                        </span>
+                                    }
+                                    else if (ExpenseService.IsIncomeTransaction(expense))
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 0.72rem;">
+                                            📈 Income
+                                        </span>
+                                    }
+                                    <span class="fw-semibold" style="color: var(--dash-text);">
+                                        @expense.Description
+                                    </span>
+                                    @if (!string.IsNullOrEmpty(expense.Note))
+                                    {
+                                        <span class="badge bg-secondary bg-opacity-10 text-secondary" title="@expense.Note">
+                                            💬 Note
+                                        </span>
+                                    }
+                                </div>
+
+                                <div class="d-flex gap-1 flex-wrap mt-1">
+                                    @if (expense.BankAccount != null)
+                                    {
+                                        <span class="badge border small d-inline-flex align-items-center gap-1"
+                                              style="font-size: 0.72rem; background: @(expense.BankAccount.Colour ?? "#4f46e5")15; color: @(expense.BankAccount.Colour ?? "#4f46e5"); border-color: @(expense.BankAccount.Colour ?? "#4f46e5")30 !important;">
+                                            <span>@(expense.BankAccount.Icon ?? "🏦")</span>
+                                            <span>@expense.BankAccount.AccountName</span>
+                                        </span>
+                                    }
+                                    else if (!string.IsNullOrEmpty(expense.Account))
+                                    {
+                                        <span class="badge bg-light text-dark border small" style="font-size: 0.7rem;">
+                                            🏦 @expense.Account
+                                        </span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(expense.Subcategory))
+                                    {
+                                        <span class="badge bg-light text-muted border small" style="font-size: 0.7rem;">
+                                            📂 @expense.Subcategory
+                                        </span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(expense.Tags))
+                                    {
+                                        @foreach (var tag in expense.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(t => !t.StartsWith("ref:")).Take(2))
+                                        {
+                                            <span class="badge bg-info bg-opacity-10 text-info small" style="font-size: 0.7rem;">
+                                                #@tag
+                                            </span>
+                                        }
+                                    }
+                                </div>
+                            </td>
+
+                            <!-- Category -->
+                            <td>
+                                @if (expense.Category is not null)
+                                {
+                                    <span class="badge rounded-pill px-2 py-1 d-inline-flex align-items-center gap-1"
+                                          style="background-color: @(expense.Category.Colour ?? "#6366f1")20; color: @(expense.Category.Colour ?? "#6366f1"); font-size: 0.8rem; font-weight: 600;">
+                                        <span>@expense.Category.Icon</span>
+                                        <span>@expense.Category.Name</span>
+                                    </span>
+                                }
+                                else if (ExpenseService.IsTransferTransaction(expense))
+                                {
+                                    <span class="badge rounded-pill px-2 py-1 bg-primary-subtle text-primary border border-primary-subtle small">
+                                        🔁 Internal Transfer
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted small">— Uncategorised —</span>
+                                }
+                            </td>
+
+                            <!-- Profile (Admin only) -->
+                            @if (Session.CurrentUser?.Role == "Admin")
+                            {
+                                <td>
+                                    @{
+                                        var member = expense.MemberGlobalId.HasValue && MemberMap.TryGetValue(expense.MemberGlobalId.Value, out var m) ? m : null;
+                                    }
+                                    @if (member != null)
+                                    {
+                                        <span class="member-badge" style="background-color: @(member.Colour ?? "#4f46e5");">
+                                            <span>@member.Avatar</span>
+                                            <span>@member.Name</span>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary bg-opacity-25 text-secondary" style="font-size: 0.72rem;">Family</span>
+                                    }
+                                </td>
+                            }
+
+                            <!-- Amount -->
+                            <td class="text-end">
+                                @if (ExpenseService.IsIncomeTransaction(expense))
+                                {
+                                    <span class="fw-bold fs-6 text-success" style="font-variant-numeric: tabular-nums;">
+                                        + ₹ @Math.Abs(expense.Amount).ToString("N2")
+                                    </span>
+                                }
+                                else if (ExpenseService.IsTransferTransaction(expense))
+                                {
+                                    <span class="fw-bold fs-6 text-primary" style="font-variant-numeric: tabular-nums;">
+                                        🔁 ₹ @Math.Abs(expense.Amount).ToString("N2")
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="fw-bold fs-6" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">
+                                        - ₹ @Math.Abs(expense.Amount).ToString("N2")
+                                    </span>
+                                }
+                            </td>
+
+                            <!-- Actions -->
+                            <td class="text-end" @onclick:stopPropagation="true">
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-outline-secondary" title="View Details"
+                                            @onclick="() => ViewExpenseDetails(expense)">
+                                        👁️
+                                    </button>
+                                    <a href="/expenses/edit/@expense.GlobalId" class="btn btn-outline-primary" title="Edit Expense">
+                                        ✏️
+                                    </a>
+                                    <button type="button" class="btn btn-outline-danger" title="Delete Expense"
+                                            @onclick="() => ConfirmDelete(expense)">
+                                        🗑️
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ── Pagination Bar & Page Size ──────────────────────────────────────── -->
+        <div class="d-flex align-items-center justify-content-between p-3 border-top flex-wrap gap-2" style="background: var(--dash-surface);">
+            <!-- Items Counter & Page Size -->
+            <div class="d-flex align-items-center gap-2 small text-muted">
+                <span>Showing @(((CurrentPage - 1) * PageSize) + 1) to @(Math.Min(CurrentPage * PageSize, TotalCount)) of @TotalCount</span>
+                <span class="d-none d-sm-inline">|</span>
+                <div class="d-flex align-items-center gap-1 d-none d-sm-flex">
+                    <span>Per page:</span>
+                    <select class="form-select form-select-sm" style="width: 70px;" @bind="PageSize" @bind:after="OnPageSizeChanged">
+                        <option value="10">10</option>
+                        <option value="20">20</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Page Buttons -->
+            @if (TotalPages > 1)
+            {
+                <nav aria-label="Page navigation">
+                    <ul class="pagination pagination-sm mb-0">
+                        <!-- First -->
+                        <li class="page-item @(CurrentPage == 1 ? "disabled" : "")">
+                            <button class="page-link" @onclick="() => GoToPage(1)" title="First Page">«</button>
+                        </li>
+                        <!-- Prev -->
+                        <li class="page-item @(CurrentPage == 1 ? "disabled" : "")">
+                            <button class="page-link" @onclick="() => GoToPage(CurrentPage - 1)" title="Previous Page">‹</button>
+                        </li>
+
+                        <!-- Page Numbers (max 5 visible) -->
+                        @{
+                            int startPage = Math.Max(1, CurrentPage - 2);
+                            int endPage = Math.Min(TotalPages, startPage + 4);
+                            if (endPage - startPage < 4)
+                            {
+                                startPage = Math.Max(1, endPage - 4);
+                            }
+                        }
+                        @for (int p = startPage; p <= endPage; p++)
+                        {
+                            var pageNum = p;
+                            <li class="page-item @(pageNum == CurrentPage ? "active" : "")">
+                                <button class="page-link" @onclick="() => GoToPage(pageNum)">@pageNum</button>
+                            </li>
+                        }
+
+                        <!-- Next -->
+                        <li class="page-item @(CurrentPage == TotalPages ? "disabled" : "")">
+                            <button class="page-link" @onclick="() => GoToPage(CurrentPage + 1)" title="Next Page">›</button>
+                        </li>
+                        <!-- Last -->
+                        <li class="page-item @(CurrentPage == TotalPages ? "disabled" : "")">
+                            <button class="page-link" @onclick="() => GoToPage(TotalPages)" title="Last Page">»</button>
+                        </li>
+                    </ul>
+                </nav>
+            }
+        </div>
+    }
+</div>
+
+<!-- ── Expense Details Modal ──────────────────────────────────────────────── -->
+@if (SelectedExpenseDetails is not null)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseDetailsModal"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 540px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold">Transaction Details</h5>
+            <button type="button" class="btn-close" @onclick="CloseDetailsModal"></button>
+        </div>
+        <div class="modal-panel-body">
+            <!-- Large Amount Banner -->
+            <div class="text-center p-3 mb-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                <span class="text-muted small text-uppercase fw-semibold d-block">Amount Spent</span>
+                <h2 class="fw-bold mb-0" style="color: var(--c-rose, #f43f5e);">
+                    ₹ @SelectedExpenseDetails.Amount.ToString("N2")
+                </h2>
+                <span class="text-muted small">@SelectedExpenseDetails.Currency</span>
+            </div>
+
+            <!-- Details List -->
+            <div class="d-flex flex-column gap-2 small">
+                <div class="d-flex justify-content-between py-2 border-bottom">
+                    <span class="text-muted">Description</span>
+                    <strong style="color: var(--dash-text);">@SelectedExpenseDetails.Description</strong>
+                </div>
+
+                <div class="d-flex justify-content-between py-2 border-bottom">
+                    <span class="text-muted">Date</span>
+                    <span style="color: var(--dash-text);">@SelectedExpenseDetails.TransactionDate.ToString("dddd, dd MMMM yyyy")</span>
+                </div>
+
+                <div class="d-flex justify-content-between py-2 border-bottom align-items-center">
+                    <span class="text-muted">Category</span>
+                    @if (SelectedExpenseDetails.Category != null)
+                    {
+                        <span class="badge rounded-pill px-2 py-1"
+                              style="background-color: @(SelectedExpenseDetails.Category.Colour ?? "#6366f1")20; color: @(SelectedExpenseDetails.Category.Colour ?? "#6366f1");">
+                            @SelectedExpenseDetails.Category.Icon @SelectedExpenseDetails.Category.Name
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="text-muted">Uncategorised</span>
+                    }
+                </div>
+
+                <div class="d-flex justify-content-between py-2 border-bottom align-items-center">
+                    <span class="text-muted">Added By</span>
+                    @{
+                        var mem = SelectedExpenseDetails.MemberGlobalId.HasValue && MemberMap.TryGetValue(SelectedExpenseDetails.MemberGlobalId.Value, out var m) ? m : null;
+                    }
+                    @if (mem != null)
+                    {
+                        <span class="member-badge" style="background-color: @(mem.Colour ?? "#4f46e5");">
+                            <span>@mem.Avatar</span>
+                            <span>@mem.Name</span>
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-secondary">Family</span>
+                    }
+                </div>
+
+                @if (SelectedExpenseDetails.BankAccount != null)
+                {
+                    <div class="d-flex justify-content-between py-2 border-bottom align-items-center">
+                        <span class="text-muted">Account / Method</span>
+                        <span class="badge px-2 py-1 border small d-inline-flex align-items-center gap-1"
+                              style="font-size: 0.8rem; background: @(SelectedExpenseDetails.BankAccount.Colour ?? "#4f46e5")15; color: @(SelectedExpenseDetails.BankAccount.Colour ?? "#4f46e5"); border-color: @(SelectedExpenseDetails.BankAccount.Colour ?? "#4f46e5")30 !important;">
+                            <span>@(SelectedExpenseDetails.BankAccount.Icon ?? "🏦")</span>
+                            <span class="fw-semibold">@SelectedExpenseDetails.BankAccount.AccountName</span>
+                        </span>
+                    </div>
+                }
+                else if (!string.IsNullOrEmpty(SelectedExpenseDetails.Account))
+                {
+                    <div class="d-flex justify-content-between py-2 border-bottom">
+                        <span class="text-muted">Account / Method</span>
+                        <span style="color: var(--dash-text);">@SelectedExpenseDetails.Account</span>
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(SelectedExpenseDetails.Subcategory))
+                {
+                    <div class="d-flex justify-content-between py-2 border-bottom">
+                        <span class="text-muted">Subcategory</span>
+                        <span style="color: var(--dash-text);">@SelectedExpenseDetails.Subcategory</span>
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(SelectedExpenseDetails.Tags))
+                {
+                    <div class="d-flex justify-content-between py-2 border-bottom align-items-center">
+                        <span class="text-muted">Tags</span>
+                        <div class="d-flex gap-1 flex-wrap">
+                            @foreach (var tag in SelectedExpenseDetails.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                            {
+                                <span class="badge bg-info bg-opacity-10 text-info">#@tag</span>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(SelectedExpenseDetails.Note))
+                {
+                    <div class="p-2 rounded-2 mt-2" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                        <span class="text-muted small fw-semibold d-block mb-1">💬 Note:</span>
+                        <p class="mb-0 small" style="color: var(--dash-text);">@SelectedExpenseDetails.Note</p>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="modal-panel-footer">
+            <button class="btn btn-outline-secondary" @onclick="CloseDetailsModal">Close</button>
+            <a href="/expenses/edit/@SelectedExpenseDetails.GlobalId" class="btn btn-primary">
+                ✏️ Edit Expense
+            </a>
+        </div>
+    </div>
+}
+
+<!-- ── Delete Confirmation Modal ──────────────────────────────────────────── -->
+@if (ExpenseToDelete is not null)
+{
+    <div class="modal-backdrop-custom" @onclick="CancelDelete"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 420px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold text-danger">⚠️ Confirm Delete</h5>
+            <button type="button" class="btn-close" @onclick="CancelDelete"></button>
+        </div>
+        <div class="modal-panel-body">
+            <p style="color: var(--dash-text);">
+                Are you sure you want to delete <strong>@ExpenseToDelete.Description</strong>?
+            </p>
+            <div class="p-2 rounded-2 mb-2 text-center" style="background: var(--dash-surface-raised);">
+                <span class="fs-5 fw-bold text-danger">₹ @ExpenseToDelete.Amount.ToString("N2")</span>
+                <span class="text-muted small d-block">@ExpenseToDelete.TransactionDate.ToString("dd MMM yyyy")</span>
+            </div>
+            <p class="text-danger small mb-0">This action will remove the record permanently from your reports.</p>
+        </div>
+        <div class="modal-panel-footer">
+            <button class="btn btn-outline-secondary" @onclick="CancelDelete">Cancel</button>
+            <button class="btn btn-danger fw-semibold" @onclick="DeleteConfirmed">
+                Yes, Delete
+            </button>
+        </div>
+    </div>
+}
+
+<!-- ── Import Excel Modal ─────────────────────────────────────────────────── -->
+@if (ShowImportModal)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseImportModal"></div>
+    <div class="modal-panel shadow-lg animate-in" style="max-width: 720px;">
+        <div class="modal-panel-header">
+            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                <span>📤</span> Import Expenses from Excel (.xlsx)
+            </h5>
+            <button type="button" class="btn-close" @onclick="CloseImportModal" disabled="@IsImporting"></button>
+        </div>
+        <div class="modal-panel-body">
+            <div class="alert alert-info py-2 small mb-3">
+                <strong>Supported Columns:</strong>
+                <code>ID</code>, <code>Amount</code>, <code>Date</code>, <code>Title</code>, <code>Note</code>, <code>Account</code>, <code>Currency</code>, <code>Category</code>, <code>Subcategory</code>, <code>Tags</code>.<br />
+                <em>Negative amounts (e.g. -409) are recorded as expenses. Missing categories will be created automatically.</em>
+            </div>
+
+            @if (!string.IsNullOrEmpty(ImportErrorMessage))
+            {
+                <div class="alert alert-danger py-2 small mb-3">
+                    ⚠️ @ImportErrorMessage
+                </div>
+            }
+
+            @if (ImportResultInfo is not null)
+            {
+                <div class="alert alert-success py-2 small mb-3">
+                    <h6 class="alert-heading mb-1 fw-bold">Import Completed!</h6>
+                    <ul class="mb-0 ps-3">
+                        <li>Added: <strong>@ImportResultInfo.InsertedCount</strong> new expense(s)</li>
+                        <li>Updated: <strong>@ImportResultInfo.UpdatedCount</strong> existing expense(s)</li>
+                        @if (ImportResultInfo.SkippedCount > 0)
+                        {
+                            <li class="text-danger">Skipped/Errors: <strong>@ImportResultInfo.SkippedCount</strong></li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Choose Excel File (.xlsx):</label>
+                <InputFile OnChange="OnFileSelected" accept=".xlsx" class="form-control" disabled="@IsImporting" />
+            </div>
+
+            @if (ParsedPreviewItems.Any())
+            {
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="fw-semibold small">Preview (@ParsedPreviewItems.Count rows parsed):</span>
+                    <span class="badge bg-primary">Total: ₹ @ParsedPreviewItems.Sum(p => Math.Abs(p.Amount)).ToString("N2")</span>
+                </div>
+                <div class="table-responsive border rounded" style="max-height: 220px; overflow-y: auto;">
+                    <table class="table table-sm table-striped mb-0 small">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Date</th>
+                                <th>Title</th>
+                                <th>Category</th>
+                                <th class="text-end">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in ParsedPreviewItems.Take(30))
+                            {
+                                <tr>
+                                    <td>@row.Date.ToString("dd MMM yyyy")</td>
+                                    <td>@row.Title</td>
+                                    <td>@(row.CategoryName ?? "—")</td>
+                                    <td class="text-end fw-semibold">₹ @Math.Abs(row.Amount).ToString("N2")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+        <div class="modal-panel-footer">
+            <button class="btn btn-outline-secondary" @onclick="CloseImportModal" disabled="@IsImporting">Cancel</button>
+            @if (ParsedPreviewItems.Any())
+            {
+                <button class="btn btn-primary fw-semibold" @onclick="ExecuteImportAsync" disabled="@IsImporting">
+                    @if (IsImporting)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        <span>Importing...</span>
+                    }
+                    else
+                    {
+                        <span>Confirm & Save (@ParsedPreviewItems.Count)</span>
+                    }
+                </button>
+            }
+        </div>
+    </div>
+}
+
+<!-- ── Custom Styles ──────────────────────────────────────────────────────── -->
+<style>
+    .stat-icon-circle {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        flex-shrink: 0;
+    }
+    .expense-row {
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+    .expense-row:hover {
+        background-color: var(--table-hover) !important;
+    }
+    .modal-backdrop-custom {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 1040;
+        backdrop-filter: blur(3px);
+    }
+    .modal-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--dash-surface);
+        border: 1px solid var(--dash-border);
+        border-radius: 20px;
+        z-index: 1050;
+        width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        color: var(--dash-text);
+    }
+    .modal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.25rem 1.5rem;
+        border-bottom: 1px solid var(--dash-border);
+    }
+    .modal-panel-body {
+        padding: 1.5rem;
+        flex: 1;
+        overflow-y: auto;
+    }
+    .modal-panel-footer {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        padding: 1rem 1.5rem;
+        border-top: 1px solid var(--dash-border);
+    }
+    .animate-in {
+        animation: scaleUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes scaleUp {
+        from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+    .search-input-wrap {
+        position: relative;
+    }
+    .search-input-wrap .search-icon {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0.6;
+        pointer-events: none;
+    }
+    .btn-clear-search {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: transparent;
+        border: none;
+        color: var(--dash-text-muted, #888);
+        cursor: pointer;
+        font-size: 0.85rem;
+        padding: 2px 6px;
+        line-height: 1;
+        border-radius: 4px;
+        transition: background-color 0.12s ease;
+    }
+    .btn-clear-search:hover {
+        background: var(--dash-surface-raised, rgba(0,0,0,0.06));
+        color: var(--dash-text);
+    }
+</style>
+
 @code {
     private List<Expense> Expenses = [];
     private List<Category> Categories = [];
+    private List<BankAccount> BankAccounts = [];
+    private List<FamilyMember> FamilyMembers = [];
+    private Dictionary<Guid, FamilyMember> MemberMap = [];
+
     private bool IsLoading = true;
     private int TotalCount;
+    private decimal TotalAmount;
     private int CurrentPage = 1;
-    private const int PageSize = 20;
+    private int PageSize = 20;
     private int TotalPages => (int)Math.Ceiling((double)TotalCount / PageSize);
+
+    [SupplyParameterFromQuery(Name = "categoryId")]
+    public string? QueryCategoryId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "accountId")]
+    public string? QueryAccountId { get; set; }
 
     private string? SearchTerm;
     private string? SelectedCategoryId;
+    private string? SelectedAccountId;
+    private string? SelectedMemberId;
+    private string SelectedTransactionType = "all";
+    private string SelectedSortBy = "date_desc";
+    private string ActiveDatePreset = "all";
+    private bool _showAllMembers = false;
+
     private DateTime? FromDate;
     private DateTime? ToDate;
+
     private Expense? ExpenseToDelete;
+    private Expense? SelectedExpenseDetails;
 
     private System.Timers.Timer? _searchDebounce;
+
+    private bool IsFiltered =>
+        !string.IsNullOrWhiteSpace(SearchTerm) ||
+        !string.IsNullOrEmpty(SelectedCategoryId) ||
+        !string.IsNullOrEmpty(SelectedAccountId) ||
+        !string.IsNullOrEmpty(SelectedMemberId) ||
+        SelectedTransactionType != "all" ||
+        FromDate.HasValue ||
+        ToDate.HasValue ||
+        ActiveDatePreset != "all";
+
+    private Guid? ActiveMemberFilter
+    {
+        get
+        {
+            if (Session.CurrentUser?.Role != "Admin")
+                return Session.CurrentUser?.GlobalId;
+
+            if (Guid.TryParse(SelectedMemberId, out var g))
+                return g;
+
+            return _showAllMembers ? null : Session.CurrentUser?.GlobalId;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
         Categories = await ExpenseService.GetCategoriesAsync();
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
+        MemberMap = FamilyMembers.ToDictionary(m => m.GlobalId);
+
+        _showAllMembers = false;
+
+        BankAccounts = await ExpenseService.GetBankAccountsAsync(ActiveMemberFilter);
+
+        if (!string.IsNullOrEmpty(QueryCategoryId))
+        {
+            SelectedCategoryId = QueryCategoryId;
+        }
+
+        if (!string.IsNullOrEmpty(QueryAccountId))
+        {
+            SelectedAccountId = QueryAccountId;
+        }
+
+        await LoadExpenses();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        bool shouldReload = false;
+
+        if (!string.IsNullOrEmpty(QueryCategoryId) && SelectedCategoryId != QueryCategoryId)
+        {
+            SelectedCategoryId = QueryCategoryId;
+            shouldReload = true;
+        }
+
+        if (!string.IsNullOrEmpty(QueryAccountId) && SelectedAccountId != QueryAccountId)
+        {
+            SelectedAccountId = QueryAccountId;
+            shouldReload = true;
+        }
+
+        if (shouldReload)
+        {
+            CurrentPage = 1;
+            await LoadExpenses();
+        }
+    }
+
+    private async Task SetViewMode(bool showAll)
+    {
+        _showAllMembers = showAll;
+        SelectedMemberId = null;
+        BankAccounts = await ExpenseService.GetBankAccountsAsync(ActiveMemberFilter);
+        CurrentPage = 1;
+        await LoadExpenses();
+    }
+
+    private async Task OnMemberFilterChanged()
+    {
+        CurrentPage = 1;
+        if (string.IsNullOrEmpty(SelectedMemberId))
+        {
+            _showAllMembers = true;
+        }
+        else if (Guid.TryParse(SelectedMemberId, out var sg) && sg == Session.CurrentUser?.GlobalId)
+        {
+            _showAllMembers = false;
+        }
+        BankAccounts = await ExpenseService.GetBankAccountsAsync(ActiveMemberFilter);
+        await LoadExpenses();
+    }
+
+    private async Task OnFilterChanged()
+    {
+        CurrentPage = 1;
+        await LoadExpenses();
+    }
+
+    private async Task OnPageSizeChanged()
+    {
+        CurrentPage = 1;
+        await LoadExpenses();
+    }
+
+    private async Task SetQuickDateRange(string preset)
+    {
+        ActiveDatePreset = preset;
+        var today = DateTime.Today;
+
+        switch (preset)
+        {
+            case "this_month":
+                FromDate = new DateTime(today.Year, today.Month, 1);
+                ToDate = today;
+                break;
+            case "last_month":
+                var lastMonth = today.AddMonths(-1);
+                FromDate = new DateTime(lastMonth.Year, lastMonth.Month, 1);
+                ToDate = new DateTime(today.Year, today.Month, 1).AddDays(-1);
+                break;
+            case "last_30":
+                FromDate = today.AddDays(-30);
+                ToDate = today;
+                break;
+            case "this_year":
+                FromDate = new DateTime(today.Year, 1, 1);
+                ToDate = today;
+                break;
+            case "all":
+            default:
+                FromDate = null;
+                ToDate = null;
+                break;
+        }
+
+        CurrentPage = 1;
+        await LoadExpenses();
+    }
+
+    private async Task OnCustomDateChanged()
+    {
+        ActiveDatePreset = "custom";
+        CurrentPage = 1;
         await LoadExpenses();
     }
 
@@ -182,24 +1091,30 @@ else
     {
         IsLoading = true;
         Guid? catId = Guid.TryParse(SelectedCategoryId, out var g) ? g : null;
+        Guid? accId = Guid.TryParse(SelectedAccountId, out var ag) ? ag : null;
 
         var result = await ExpenseService.GetExpensesAsync(
             page: CurrentPage,
             pageSize: PageSize,
             searchTerm: SearchTerm,
             categoryGlobalId: catId,
+            accountGlobalId: accId,
             fromDate: FromDate,
-            toDate: ToDate);
+            toDate: ToDate,
+            memberGlobalId: ActiveMemberFilter,
+            sortBy: SelectedSortBy,
+            transactionType: SelectedTransactionType);
 
         Expenses = result.Items;
         TotalCount = result.TotalCount;
+        TotalAmount = result.TotalAmount;
         IsLoading = false;
     }
 
     private void OnSearchChanged()
     {
         _searchDebounce?.Dispose();
-        _searchDebounce = new System.Timers.Timer(400);
+        _searchDebounce = new System.Timers.Timer(350);
         _searchDebounce.Elapsed += async (_, _) =>
         {
             _searchDebounce?.Dispose();
@@ -214,8 +1129,16 @@ else
         _searchDebounce.Start();
     }
 
+    private async Task ClearSearch()
+    {
+        SearchTerm = null;
+        CurrentPage = 1;
+        await LoadExpenses();
+    }
+
     private async Task GoToPage(int page)
     {
+        if (page < 1 || (TotalPages > 0 && page > TotalPages)) return;
         CurrentPage = page;
         await LoadExpenses();
     }
@@ -224,11 +1147,21 @@ else
     {
         SearchTerm = null;
         SelectedCategoryId = null;
+        SelectedAccountId = null;
+        SelectedMemberId = null;
+        SelectedTransactionType = "all";
+        SelectedSortBy = "date_desc";
+        ActiveDatePreset = "all";
         FromDate = null;
         ToDate = null;
         CurrentPage = 1;
+        _showAllMembers = false;
+        BankAccounts = await ExpenseService.GetBankAccountsAsync(ActiveMemberFilter);
         await LoadExpenses();
     }
+
+    private void ViewExpenseDetails(Expense exp) => SelectedExpenseDetails = exp;
+    private void CloseDetailsModal() => SelectedExpenseDetails = null;
 
     private void ConfirmDelete(Expense expense) => ExpenseToDelete = expense;
     private void CancelDelete() => ExpenseToDelete = null;
@@ -238,8 +1171,172 @@ else
         if (ExpenseToDelete is not null)
         {
             await ExpenseService.DeleteExpenseAsync(ExpenseToDelete.GlobalId);
+            if (SelectedExpenseDetails?.GlobalId == ExpenseToDelete.GlobalId)
+            {
+                SelectedExpenseDetails = null;
+            }
             ExpenseToDelete = null;
             await LoadExpenses();
+        }
+    }
+
+    // ── Export Handlers ─────────────────────────────────────────────────────
+    private bool IsExporting = false;
+
+    private async Task ExportToCsv()
+    {
+        try
+        {
+            IsExporting = true;
+            StateHasChanged();
+
+            Guid? catId = Guid.TryParse(SelectedCategoryId, out var g) ? g : null;
+            Guid? accId = Guid.TryParse(SelectedAccountId, out var ag) ? ag : null;
+            var allFiltered = await ExpenseService.GetAllExpensesAsync(
+                searchTerm: SearchTerm,
+                categoryGlobalId: catId,
+                accountGlobalId: accId,
+                fromDate: FromDate,
+                toDate: ToDate,
+                memberGlobalId: ActiveMemberFilter);
+
+            var bytes = ExportService.ExportExpensesToCsv(allFiltered);
+            var base64 = Convert.ToBase64String(bytes);
+            var fileName = $"Expenses_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+
+            await JS.InvokeVoidAsync("downloadFileFromBase64", fileName, "text/csv;charset=utf-8", base64);
+        }
+        finally
+        {
+            IsExporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            IsExporting = true;
+            StateHasChanged();
+
+            Guid? catId = Guid.TryParse(SelectedCategoryId, out var g) ? g : null;
+            Guid? accId = Guid.TryParse(SelectedAccountId, out var ag) ? ag : null;
+            var allFiltered = await ExpenseService.GetAllExpensesAsync(
+                searchTerm: SearchTerm,
+                categoryGlobalId: catId,
+                accountGlobalId: accId,
+                fromDate: FromDate,
+                toDate: ToDate,
+                memberGlobalId: ActiveMemberFilter);
+
+            var title = "FalimyCalc - Expenses Export";
+            if (FromDate.HasValue || ToDate.HasValue)
+            {
+                var fromStr = FromDate?.ToString("dd MMM yyyy") ?? "Start";
+                var toStr = ToDate?.ToString("dd MMM yyyy") ?? "Present";
+                title += $" ({fromStr} - {toStr})";
+            }
+
+            var bytes = ExportService.ExportExpensesToExcel(allFiltered, title);
+            var base64 = Convert.ToBase64String(bytes);
+            var fileName = $"Expenses_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+
+            await JS.InvokeVoidAsync("downloadFileFromBase64", fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base64);
+        }
+        finally
+        {
+            IsExporting = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Excel Import State & Handlers ───────────────────────────────────────
+    private bool ShowImportModal = false;
+    private bool IsImporting = false;
+    private string? ImportErrorMessage;
+    private ExpenseService.ImportResult? ImportResultInfo;
+    private List<ExpenseService.ImportExpenseItem> ParsedPreviewItems = [];
+
+    private void OpenImportModal()
+    {
+        ShowImportModal = true;
+        ImportErrorMessage = null;
+        ImportResultInfo = null;
+        ParsedPreviewItems = [];
+    }
+
+    private void CloseImportModal()
+    {
+        ShowImportModal = false;
+        ImportErrorMessage = null;
+        ImportResultInfo = null;
+        ParsedPreviewItems = [];
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        ImportErrorMessage = null;
+        ImportResultInfo = null;
+        ParsedPreviewItems = [];
+
+        var file = e.File;
+        if (file is null) return;
+
+        const long maxFileSize = 10 * 1024 * 1024;
+        if (file.Size > maxFileSize)
+        {
+            ImportErrorMessage = "File size exceeds the 10 MB limit.";
+            return;
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream(maxFileSize);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            ParsedPreviewItems = ExportService.ParseExpensesFromExcel(ms);
+            if (!ParsedPreviewItems.Any())
+            {
+                ImportErrorMessage = "No expense rows were found in the uploaded Excel worksheet.";
+            }
+        }
+        catch (Exception ex)
+        {
+            ImportErrorMessage = $"Failed to parse Excel file: {ex.Message}";
+        }
+    }
+
+    private async Task ExecuteImportAsync()
+    {
+        if (!ParsedPreviewItems.Any()) return;
+
+        try
+        {
+            IsImporting = true;
+            ImportErrorMessage = null;
+            StateHasChanged();
+
+            ImportResultInfo = await ExpenseService.ImportExpensesBatchAsync(ParsedPreviewItems, Session.CurrentUser?.GlobalId);
+
+            Categories = await ExpenseService.GetCategoriesAsync();
+            await LoadExpenses();
+        }
+        catch (Exception ex)
+        {
+            var innermost = ex;
+            while (innermost.InnerException is not null)
+            {
+                innermost = innermost.InnerException;
+            }
+            ImportErrorMessage = $"Import failed: {innermost.Message}";
+        }
+        finally
+        {
+            IsImporting = false;
+            StateHasChanged();
         }
     }
 }
