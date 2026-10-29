@@ -1147,7 +1147,9 @@ else
         var (items, _, _) = await ExpenseService.GetExpensesAsync(page: 1, pageSize: 5, memberGlobalId: filter);
         RecentExpenses = items;
 
-        _dailyAvg = now.Day > 0 ? Math.Round(MonthlyTotal / now.Day, 2) : 0;
+        // Use the KPI-computed expense (excludes income & transfers) for daily average
+        var expenseOnly = _financialSummary?.CurrentMonthExpense ?? MonthlyTotal;
+        _dailyAvg = now.Day > 0 ? Math.Round(expenseOnly / now.Day, 2) : 0;
         _topCategory = CategoryTotals.OrderByDescending(x => x.Value).FirstOrDefault().Key;
         _trends = await ExpenseService.GetSpendingTrendsAsync(6, filter);
         _budgetStatuses = await ExpenseService.GetCategoryBudgetStatusesAsync(now.Year, now.Month, filter);
@@ -1284,14 +1286,17 @@ else
         if (_dailyAvg > 1000)
             _spendingAlerts.Add(new("warning", "⚠️", $"Daily average is ₹{_dailyAvg:N0}. You're on track for a high-spend month."));
 
-        if (MonthlyTotal == 0)
+        // Use expense-only total from the KPI summary (excludes income & transfers)
+        var currentMonthExpense = _financialSummary?.CurrentMonthExpense ?? 0m;
+
+        if (currentMonthExpense == 0)
             _spendingAlerts.Add(new("info", "ℹ️", "No expenses recorded this month. Add your first expense to start tracking."));
 
         if (_trends.Count >= 2)
         {
             var lastMonth = _trends[^2].Total;
-            if (lastMonth > 0 && MonthlyTotal > lastMonth * 1.2m)
-                _spendingAlerts.Add(new("danger", "🚨", $"Spending is 20%+ above last month (₹{lastMonth:N0} → ₹{MonthlyTotal:N0})."));
+            if (lastMonth > 0 && currentMonthExpense > lastMonth * 1.2m)
+                _spendingAlerts.Add(new("danger", "🚨", $"Spending is 20%+ above last month (₹{lastMonth:N0} → ₹{currentMonthExpense:N0})."));
         }
     }
 

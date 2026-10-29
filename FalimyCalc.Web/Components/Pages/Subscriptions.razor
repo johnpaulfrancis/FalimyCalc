@@ -765,7 +765,7 @@ else
 
             if (ActiveTab == "Active") query = query.Where(r => r.Status == "Active");
             else if (ActiveTab == "Paused") query = query.Where(r => r.Status == "Paused");
-            else if (ActiveTab == "DueSoon") query = query.Where(r => r.Status == "Active" && r.NextDueDate.Date <= in7Days);
+            else if (ActiveTab == "DueSoon") query = query.Where(r => r.Status == "Active" && r.NextDueDate.Date >= today && r.NextDueDate.Date <= in7Days);
 
             return query;
         }

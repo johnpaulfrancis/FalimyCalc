@@ -380,7 +380,18 @@
                                               style="font-size: 0.72rem; background: @(expense.BankAccount.Colour ?? "#4f46e5")15; color: @(expense.BankAccount.Colour ?? "#4f46e5"); border-color: @(expense.BankAccount.Colour ?? "#4f46e5")30 !important;">
                                             <span>@(expense.BankAccount.Icon ?? "🏦")</span>
                                             <span>@expense.BankAccount.AccountName</span>
+                                            @if (expense.BankAccount.IsJoint)
+                                            {
+                                                <span class="badge bg-info-subtle text-info p-0 ms-1" style="font-size: 0.65rem;">👥 Joint</span>
+                                            }
                                         </span>
+                                        @if (expense.BankAccount.IsJoint && expense.MemberGlobalId.HasValue && MemberMap.TryGetValue(expense.MemberGlobalId.Value, out var transactor))
+                                        {
+                                            <span class="badge bg-light text-dark border small d-inline-flex align-items-center gap-1" style="font-size: 0.68rem;">
+                                                <span>@transactor.Avatar</span>
+                                                <span>By @transactor.Name</span>
+                                            </span>
+                                        }
                                     }
                                     else if (!string.IsNullOrEmpty(expense.Account))
                                     {
@@ -478,6 +489,23 @@
                                             @onclick="() => ViewExpenseDetails(expense)">
                                         👁️
                                     </button>
+                                    @if (!ExpenseService.IsTransferTransaction(expense))
+                                    {
+                                        if (ExpenseService.IsIncomeTransaction(expense))
+                                        {
+                                            <button type="button" class="btn btn-outline-warning" title="Change to Expense"
+                                                    @onclick="() => ConvertType(expense, false)">
+                                                💸
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="btn btn-outline-success" title="Change to Income"
+                                                    @onclick="() => ConvertType(expense, true)">
+                                                📈
+                                            </button>
+                                        }
+                                    }
                                     <a href="/expenses/edit/@expense.GlobalId" class="btn btn-outline-primary" title="Edit Expense">
                                         ✏️
                                     </a>
@@ -568,10 +596,27 @@
         <div class="modal-panel-body">
             <!-- Large Amount Banner -->
             <div class="text-center p-3 mb-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
-                <span class="text-muted small text-uppercase fw-semibold d-block">Amount Spent</span>
-                <h2 class="fw-bold mb-0" style="color: var(--c-rose, #f43f5e);">
-                    ₹ @SelectedExpenseDetails.Amount.ToString("N2")
-                </h2>
+                @if (ExpenseService.IsIncomeTransaction(SelectedExpenseDetails))
+                {
+                    <span class="text-muted small text-uppercase fw-semibold d-block text-success">📈 Amount Received (Income)</span>
+                    <h2 class="fw-bold mb-0 text-success" style="font-variant-numeric: tabular-nums;">
+                        + ₹ @Math.Abs(SelectedExpenseDetails.Amount).ToString("N2")
+                    </h2>
+                }
+                else if (ExpenseService.IsTransferTransaction(SelectedExpenseDetails))
+                {
+                    <span class="text-muted small text-uppercase fw-semibold d-block text-primary">🔁 Transfer Amount</span>
+                    <h2 class="fw-bold mb-0 text-primary" style="font-variant-numeric: tabular-nums;">
+                        🔁 ₹ @Math.Abs(SelectedExpenseDetails.Amount).ToString("N2")
+                    </h2>
+                }
+                else
+                {
+                    <span class="text-muted small text-uppercase fw-semibold d-block">Amount Spent (Expense)</span>
+                    <h2 class="fw-bold mb-0" style="color: var(--c-rose, #f43f5e); font-variant-numeric: tabular-nums;">
+                        - ₹ @Math.Abs(SelectedExpenseDetails.Amount).ToString("N2")
+                    </h2>
+                }
                 <span class="text-muted small">@SelectedExpenseDetails.Currency</span>
             </div>
 
@@ -669,11 +714,32 @@
                 }
             </div>
         </div>
-        <div class="modal-panel-footer">
-            <button class="btn btn-outline-secondary" @onclick="CloseDetailsModal">Close</button>
-            <a href="/expenses/edit/@SelectedExpenseDetails.GlobalId" class="btn btn-primary">
-                ✏️ Edit Expense
-            </a>
+        <div class="modal-panel-footer d-flex justify-content-between align-items-center">
+            <div>
+                @if (!ExpenseService.IsTransferTransaction(SelectedExpenseDetails))
+                {
+                    if (ExpenseService.IsIncomeTransaction(SelectedExpenseDetails))
+                    {
+                        <button type="button" class="btn btn-outline-warning btn-sm d-inline-flex align-items-center gap-1"
+                                @onclick='() => ConvertTypeFromModal(SelectedExpenseDetails, false)'>
+                            <span>💸</span> <span>Change to Expense</span>
+                        </button>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn btn-outline-success btn-sm d-inline-flex align-items-center gap-1"
+                                @onclick='() => ConvertTypeFromModal(SelectedExpenseDetails, true)'>
+                            <span>📈</span> <span>Change to Income</span>
+                        </button>
+                    }
+                }
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-secondary" @onclick="CloseDetailsModal">Close</button>
+                <a href="/expenses/edit/@SelectedExpenseDetails.GlobalId" class="btn btn-primary">
+                    ✏️ Edit Transaction
+                </a>
+            </div>
         </div>
     </div>
 }
@@ -1162,6 +1228,29 @@
 
     private void ViewExpenseDetails(Expense exp) => SelectedExpenseDetails = exp;
     private void CloseDetailsModal() => SelectedExpenseDetails = null;
+
+    private async Task ConvertType(Expense expense, bool makeIncome)
+    {
+        var target = makeIncome ? "income" : "expense";
+        var res = await ExpenseService.ConvertTransactionTypeAsync(expense.GlobalId, target);
+        if (res != null)
+        {
+            await LoadExpenses();
+            StateHasChanged();
+        }
+    }
+
+    private async Task ConvertTypeFromModal(Expense expense, bool makeIncome)
+    {
+        var target = makeIncome ? "income" : "expense";
+        var res = await ExpenseService.ConvertTransactionTypeAsync(expense.GlobalId, target);
+        if (res != null)
+        {
+            SelectedExpenseDetails = res;
+            await LoadExpenses();
+            StateHasChanged();
+        }
+    }
 
     private void ConfirmDelete(Expense expense) => ExpenseToDelete = expense;
     private void CancelDelete() => ExpenseToDelete = null;

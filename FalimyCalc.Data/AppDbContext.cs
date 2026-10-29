@@ -95,7 +95,10 @@ public class AppDbContext : DbContext
             entity.Property(e => e.Icon).HasMaxLength(50);
             entity.Property(e => e.DeviceId).HasMaxLength(100);
             entity.Property(e => e.MemberGlobalId);
+            entity.Property(e => e.IsJoint).HasDefaultValue(false);
+            entity.Property(e => e.JointMemberGlobalIds).HasMaxLength(1000);
             entity.HasIndex(e => e.MemberGlobalId);
+            entity.HasIndex(e => e.IsJoint);
         });
 
         // ── PendingTransaction ─────────────────────────────────────────────

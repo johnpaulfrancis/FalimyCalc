@@ -393,15 +393,15 @@ else
 <!-- ── Create / Edit Loan Modal ───────────────────────────────────────────── -->
 @if (ShowModal)
 {
-    <div class="modal-backdrop-custom" @onclick="CloseModal"></div>
-    <div class="modal-panel shadow-lg animate-in" style="max-width: 540px;">
-        <div class="modal-panel-header">
-            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
-                <span>@(EditingLoan.Id == 0 ? "💳 Add New Loan / EMI Account" : "✏️ Edit Loan Details")</span>
-            </h5>
-            <button type="button" class="btn-close" @onclick="CloseModal"></button>
-        </div>
-        <div class="modal-panel-body">
+    <div class="modal-backdrop-custom" @onclick="CloseModal">
+        <div class="modal-panel shadow-lg animate-in" style="max-width: 540px;" @onclick:stopPropagation="true">
+            <div class="modal-panel-header">
+                <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                    <span>@(EditingLoan.Id == 0 ? "💳 Add New Loan / EMI Account" : "✏️ Edit Loan Details")</span>
+                </h5>
+                <button type="button" class="btn-close" @onclick="CloseModal"></button>
+            </div>
+            <div class="modal-panel-body">
             @if (!string.IsNullOrEmpty(ModalError))
             {
                 <div class="alert alert-danger py-2 px-3 small mb-3">
@@ -551,64 +551,66 @@ else
             </div>
         </div>
     </div>
+</div>
 }
 
 <!-- ── Record Payment / Pay EMI Modal ─────────────────────────────────────── -->
 @if (LoanToPay != null)
 {
-    <div class="modal-backdrop-custom" @onclick="() => LoanToPay = null"></div>
-    <div class="modal-panel shadow-lg animate-in" style="max-width: 440px;">
-        <div class="modal-panel-header">
-            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
-                <span>✓ @(PaymentType == "EMI" ? "Pay Monthly EMI" : "⚡ Part Prepayment")</span>
-            </h5>
-            <button type="button" class="btn-close" @onclick="() => LoanToPay = null"></button>
-        </div>
-        <div class="modal-panel-body">
-            <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                    <strong style="color: var(--dash-text);">@LoanToPay.Name</strong>
-                    <span class="badge bg-secondary-subtle text-secondary">@LoanToPay.LoanType</span>
+    <div class="modal-backdrop-custom" @onclick="() => LoanToPay = null">
+        <div class="modal-panel shadow-lg animate-in" style="max-width: 440px;" @onclick:stopPropagation="true">
+            <div class="modal-panel-header">
+                <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                    <span>✓ @(PaymentType == "EMI" ? "Pay Monthly EMI" : "⚡ Part Prepayment")</span>
+                </h5>
+                <button type="button" class="btn-close" @onclick="() => LoanToPay = null"></button>
+            </div>
+            <div class="modal-panel-body">
+                <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong style="color: var(--dash-text);">@LoanToPay.Name</strong>
+                        <span class="badge bg-secondary-subtle text-secondary">@LoanToPay.LoanType</span>
+                    </div>
+                    <div class="small text-muted">
+                        Outstanding Balance: <strong>₹@LoanToPay.OutstandingBalance.ToString("N2")</strong>
+                    </div>
                 </div>
-                <div class="small text-muted">
-                    Outstanding Balance: <strong>₹@LoanToPay.OutstandingBalance.ToString("N2")</strong>
+
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Payment Type</label>
+                    <select class="form-select" @bind="PaymentType">
+                        <option value="EMI">Monthly Installment (EMI)</option>
+                        <option value="Prepayment">Extra Principal Prepayment</option>
+                    </select>
                 </div>
-            </div>
 
-            <div class="mb-3">
-                <label class="form-label small fw-semibold text-uppercase text-muted">Payment Type</label>
-                <select class="form-select" @bind="PaymentType">
-                    <option value="EMI">Monthly Installment (EMI)</option>
-                    <option value="Prepayment">Extra Principal Prepayment</option>
-                </select>
-            </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Payment Amount (₹) <span class="text-danger">*</span></label>
+                    <input type="number" step="0.01" min="1" class="form-control form-control-lg fw-bold" @bind="PaymentAmount" />
+                </div>
 
-            <div class="mb-3">
-                <label class="form-label small fw-semibold text-uppercase text-muted">Payment Amount (₹) <span class="text-danger">*</span></label>
-                <input type="number" step="0.01" min="1" class="form-control form-control-lg fw-bold" @bind="PaymentAmount" />
-            </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Payment Date <span class="text-danger">*</span></label>
+                    <input type="date" class="form-control" @bind="PaymentDate" />
+                </div>
 
-            <div class="mb-3">
-                <label class="form-label small fw-semibold text-uppercase text-muted">Payment Date <span class="text-danger">*</span></label>
-                <input type="date" class="form-control" @bind="PaymentDate" />
-            </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Debit From Bank Account</label>
+                    <select class="form-select" @bind="PaymentAccountString">
+                        <option value="">🏦 Any / Unspecified</option>
+                        @foreach (var acc in BankAccounts)
+                        {
+                            <option value="@acc.GlobalId">@acc.Icon @acc.AccountName (Bal: ₹@acc.InitialBalance.ToString("N0"))</option>
+                        }
+                    </select>
+                </div>
 
-            <div class="mb-3">
-                <label class="form-label small fw-semibold text-uppercase text-muted">Debit From Bank Account</label>
-                <select class="form-select" @bind="PaymentAccountString">
-                    <option value="">🏦 Any / Unspecified</option>
-                    @foreach (var acc in BankAccounts)
-                    {
-                        <option value="@acc.GlobalId">@acc.Icon @acc.AccountName (Bal: ₹@acc.InitialBalance.ToString("N0"))</option>
-                    }
-                </select>
-            </div>
-
-            <div class="d-flex justify-content-end gap-2 mt-4">
-                <button type="button" class="btn btn-outline-secondary" @onclick="() => LoanToPay = null">Cancel</button>
-                <button type="button" class="btn btn-success px-4 fw-semibold" @onclick="ExecutePaymentAsync" disabled="@IsSaving">
-                    @(IsSaving ? "Recording..." : "Confirm Payment ✓")
-                </button>
+                <div class="d-flex justify-content-end gap-2 mt-4">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="() => LoanToPay = null">Cancel</button>
+                    <button type="button" class="btn btn-success px-4 fw-semibold" @onclick="ExecutePaymentAsync" disabled="@IsSaving">
+                        @(IsSaving ? "Recording..." : "Confirm Payment ✓")
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -617,46 +619,47 @@ else
 <!-- ── Amortization Schedule Modal ────────────────────────────────────────── -->
 @if (LoanForSchedule != null)
 {
-    <div class="modal-backdrop-custom" @onclick="() => LoanForSchedule = null"></div>
-    <div class="modal-panel shadow-lg animate-in" style="max-width: 680px;">
-        <div class="modal-panel-header">
-            <div>
-                <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
-                    <span>📄 Repayment Schedule: @LoanForSchedule.Name</span>
-                </h5>
-                <span class="small text-muted">₹@LoanForSchedule.PrincipalAmount.ToString("N0") @LoanForSchedule.InterestRate% p.a. for @LoanForSchedule.TenureMonths months</span>
+    <div class="modal-backdrop-custom" @onclick="() => LoanForSchedule = null">
+        <div class="modal-panel shadow-lg animate-in" style="max-width: 680px;" @onclick:stopPropagation="true">
+            <div class="modal-panel-header">
+                <div>
+                    <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                        <span>📄 Repayment Schedule: @LoanForSchedule.Name</span>
+                    </h5>
+                    <span class="small text-muted">₹@LoanForSchedule.PrincipalAmount.ToString("N0") @LoanForSchedule.InterestRate% p.a. for @LoanForSchedule.TenureMonths months</span>
+                </div>
+                <button type="button" class="btn-close" @onclick="() => LoanForSchedule = null"></button>
             </div>
-            <button type="button" class="btn-close" @onclick="() => LoanForSchedule = null"></button>
-        </div>
-        <div class="modal-panel-body p-0">
-            <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
-                <table class="table table-sm table-hover mb-0" style="font-size: 0.8rem;">
-                    <thead class="table-light sticky-top" style="background: var(--dash-surface-raised);">
-                        <tr>
-                            <th>#</th>
-                            <th>Date</th>
-                            <th>Beginning</th>
-                            <th>EMI</th>
-                            <th>Principal</th>
-                            <th>Interest</th>
-                            <th>Ending Bal</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var row in ActiveSchedule)
-                        {
+            <div class="modal-panel-body p-0">
+                <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+                    <table class="table table-sm table-hover mb-0" style="font-size: 0.8rem;">
+                        <thead class="table-light sticky-top" style="background: var(--dash-surface-raised);">
                             <tr>
-                                <td class="fw-bold">@row.MonthNumber</td>
-                                <td>@row.PaymentDate.ToString("MMM yyyy")</td>
-                                <td>₹@row.BeginningBalance.ToString("N0")</td>
-                                <td class="fw-semibold text-danger">₹@row.EmiAmount.ToString("N0")</td>
-                                <td class="text-success">₹@row.PrincipalPaid.ToString("N0")</td>
-                                <td class="text-muted">₹@row.InterestPaid.ToString("N0")</td>
-                                <td class="fw-semibold">₹@row.EndingBalance.ToString("N0")</td>
+                                <th>#</th>
+                                <th>Date</th>
+                                <th>Beginning</th>
+                                <th>EMI</th>
+                                <th>Principal</th>
+                                <th>Interest</th>
+                                <th>Ending Bal</th>
                             </tr>
-                        }
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in ActiveSchedule)
+                            {
+                                <tr>
+                                    <td class="fw-bold">@row.MonthNumber</td>
+                                    <td>@row.PaymentDate.ToString("MMM yyyy")</td>
+                                    <td>₹@row.BeginningBalance.ToString("N0")</td>
+                                    <td class="fw-semibold text-danger">₹@row.EmiAmount.ToString("N0")</td>
+                                    <td class="text-success">₹@row.PrincipalPaid.ToString("N0")</td>
+                                    <td class="text-muted">₹@row.InterestPaid.ToString("N0")</td>
+                                    <td class="fw-semibold">₹@row.EndingBalance.ToString("N0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -665,57 +668,58 @@ else
 <!-- ── Interactive Standalone EMI Calculator Modal ────────────────────────── -->
 @if (ShowCalculatorModal)
 {
-    <div class="modal-backdrop-custom" @onclick="() => ShowCalculatorModal = false"></div>
-    <div class="modal-panel shadow-lg animate-in" style="max-width: 500px;">
-        <div class="modal-panel-header">
-            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
-                <span>🧮 Smart EMI Calculator</span>
-            </h5>
-            <button type="button" class="btn-close" @onclick="() => ShowCalculatorModal = false"></button>
-        </div>
-        <div class="modal-panel-body">
-            <div class="mb-3">
-                <label class="form-label small fw-semibold text-uppercase text-muted">Loan Amount (₹)</label>
-                <input type="number" step="10000" min="1000" class="form-control" @bind="CalcPrincipal" @bind:after="RunCalculator" />
+    <div class="modal-backdrop-custom" @onclick="() => ShowCalculatorModal = false">
+        <div class="modal-panel shadow-lg animate-in" style="max-width: 500px;" @onclick:stopPropagation="true">
+            <div class="modal-panel-header">
+                <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                    <span>🧮 Smart EMI Calculator</span>
+                </h5>
+                <button type="button" class="btn-close" @onclick="() => ShowCalculatorModal = false"></button>
             </div>
-            <div class="row g-2 mb-3">
-                <div class="col-sm-6">
-                    <label class="form-label small fw-semibold text-uppercase text-muted">Interest Rate (% p.a.)</label>
-                    <input type="number" step="0.1" min="0" max="40" class="form-control" @bind="CalcRate" @bind:after="RunCalculator" />
+            <div class="modal-panel-body">
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Loan Amount (₹)</label>
+                    <input type="number" step="10000" min="1000" class="form-control" @bind="CalcPrincipal" @bind:event="oninput" @bind:after="RunCalculator" />
                 </div>
-                <div class="col-sm-6">
-                    <label class="form-label small fw-semibold text-uppercase text-muted">Tenure (Months)</label>
-                    <input type="number" min="1" max="480" class="form-control" @bind="CalcMonths" @bind:after="RunCalculator" />
+                <div class="row g-2 mb-3">
+                    <div class="col-sm-6">
+                        <label class="form-label small fw-semibold text-uppercase text-muted">Interest Rate (% p.a.)</label>
+                        <input type="number" step="0.1" min="0" max="40" class="form-control" @bind="CalcRate" @bind:event="oninput" @bind:after="RunCalculator" />
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="form-label small fw-semibold text-uppercase text-muted">Tenure (Months)</label>
+                        <input type="number" min="1" max="480" class="form-control" @bind="CalcMonths" @bind:event="oninput" @bind:after="RunCalculator" />
+                    </div>
                 </div>
-            </div>
 
-            <!-- Results Card -->
-            <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
-                <div class="text-center mb-3">
-                    <span class="small text-muted text-uppercase fw-semibold d-block">Monthly EMI Amount</span>
-                    <h2 class="fw-bold mb-0" style="color: var(--c-rose, #f43f5e);">
-                        ₹ @CalcEmi.ToString("N2")
-                    </h2>
+                <!-- Results Card -->
+                <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                    <div class="text-center mb-3">
+                        <span class="small text-muted text-uppercase fw-semibold d-block">Monthly EMI Amount</span>
+                        <h2 class="fw-bold mb-0" style="color: var(--c-rose, #f43f5e);">
+                            ₹ @CalcEmi.ToString("N2")
+                        </h2>
+                    </div>
+                    <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
+                        <span class="text-muted">Total Principal:</span>
+                        <strong>₹ @CalcPrincipal.ToString("N2")</strong>
+                    </div>
+                    <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
+                        <span class="text-muted">Total Interest Payable:</span>
+                        <strong class="text-danger">₹ @CalcTotalInterest.ToString("N2")</strong>
+                    </div>
+                    <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
+                        <span class="text-muted">Total Repayment (P + I):</span>
+                        <strong class="text-primary">₹ @CalcTotalAmount.ToString("N2")</strong>
+                    </div>
                 </div>
-                <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
-                    <span class="text-muted">Total Principal:</span>
-                    <strong>₹ @CalcPrincipal.ToString("N2")</strong>
-                </div>
-                <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
-                    <span class="text-muted">Total Interest Payable:</span>
-                    <strong class="text-danger">₹ @CalcTotalInterest.ToString("N2")</strong>
-                </div>
-                <div class="d-flex justify-content-between py-1 border-top small" style="border-color: var(--dash-border) !important;">
-                    <span class="text-muted">Total Repayment (P + I):</span>
-                    <strong class="text-primary">₹ @CalcTotalAmount.ToString("N2")</strong>
-                </div>
-            </div>
 
-            <div class="d-flex justify-content-end gap-2">
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ShowCalculatorModal = false">Close</button>
-                <button type="button" class="btn btn-primary btn-sm px-3" @onclick="TransferCalcToNewLoan">
-                    ➕ Create Loan With These Numbers
-                </button>
+                <div class="d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ShowCalculatorModal = false">Close</button>
+                    <button type="button" class="btn btn-primary btn-sm px-3" @onclick="TransferCalcToNewLoan">
+                        ➕ Create Loan With These Numbers
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -724,26 +728,61 @@ else
 <!-- ── Delete Confirmation Modal ─────────────────────────────────────────── -->
 @if (LoanToDelete != null)
 {
-    <div class="modal-backdrop-custom" @onclick="() => LoanToDelete = null"></div>
-    <div class="modal-panel shadow-lg animate-in" style="max-width: 420px;">
-        <div class="modal-panel-header">
-            <h5 class="mb-0 fw-bold text-danger d-flex align-items-center gap-2">
-                <span>🗑️ Delete Loan Account</span>
-            </h5>
-            <button type="button" class="btn-close" @onclick="() => LoanToDelete = null"></button>
-        </div>
-        <div class="modal-panel-body">
-            <p class="small text-muted">
-                Are you sure you want to delete the loan <strong>@LoanToDelete.Name</strong>?
-                This will soft-delete the loan configuration and historic payment records.
-            </p>
-            <div class="d-flex justify-content-end gap-2 mt-4">
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => LoanToDelete = null">Cancel</button>
-                <button type="button" class="btn btn-danger btn-sm px-3 fw-semibold" @onclick="ExecuteDeleteAsync">Confirm Delete</button>
+    <div class="modal-backdrop-custom" @onclick="() => LoanToDelete = null">
+        <div class="modal-panel shadow-lg animate-in" style="max-width: 420px;" @onclick:stopPropagation="true">
+            <div class="modal-panel-header">
+                <h5 class="mb-0 fw-bold text-danger d-flex align-items-center gap-2">
+                    <span>🗑️ Delete Loan Account</span>
+                </h5>
+                <button type="button" class="btn-close" @onclick="() => LoanToDelete = null"></button>
+            </div>
+            <div class="modal-panel-body">
+                <p class="small text-muted">
+                    Are you sure you want to delete the loan <strong>@LoanToDelete.Name</strong>?
+                    This will soft-delete the loan configuration and historic payment records.
+                </p>
+                <div class="d-flex justify-content-end gap-2 mt-4">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => LoanToDelete = null">Cancel</button>
+                    <button type="button" class="btn btn-danger btn-sm px-3 fw-semibold" @onclick="ExecuteDeleteAsync">Confirm Delete</button>
+                </div>
             </div>
         </div>
     </div>
 }
+
+<style>
+    .modal-panel {
+        background: var(--dash-surface, #ffffff);
+        color: var(--dash-text-main, #1e293b);
+        border: 1px solid var(--dash-border, #e2e8f0);
+        border-radius: 16px;
+        width: 100%;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.25), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        z-index: 1060;
+    }
+    .modal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.1rem 1.25rem;
+        border-bottom: 1px solid var(--dash-border, #e2e8f0);
+    }
+    .modal-panel-body {
+        padding: 1.25rem;
+        overflow-y: auto;
+    }
+    .animate-in {
+        animation: scaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes scaleIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+    }
+</style>
 
 @code {
     private bool IsLoading = true;
@@ -977,6 +1016,16 @@ else
         {
             ModalError = "Tenure in months must be at least 1.";
             return;
+        }
+
+        if (EditingLoan.EmiAmount <= 0)
+        {
+            RecalculateEditingEmi();
+        }
+
+        if (EditingLoan.OutstandingBalance <= 0)
+        {
+            EditingLoan.OutstandingBalance = EditingLoan.PrincipalAmount;
         }
 
         IsSaving = true;

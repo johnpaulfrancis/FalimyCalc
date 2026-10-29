@@ -445,7 +445,9 @@
         // Already logged in? Go home
         if (Session.IsAuthenticated)
         {
-            Nav.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl);
+            // Sanitise ReturnUrl: only allow relative paths starting with '/' to prevent open redirect
+            var safeReturn = !string.IsNullOrWhiteSpace(ReturnUrl) && ReturnUrl.StartsWith("/") ? ReturnUrl : "/";
+            Nav.NavigateTo(safeReturn);
             return;
         }
     }
@@ -569,7 +571,8 @@
             await JS.InvokeVoidAsync("falimyAuth.setSession", SelectedMember.GlobalId.ToString());
         }
         catch { }
-        var target = string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl;
+        // Sanitise ReturnUrl: only allow relative internal paths
+        var target = !string.IsNullOrWhiteSpace(ReturnUrl) && ReturnUrl.StartsWith("/") ? ReturnUrl : "/";
         Nav.NavigateTo(target);
     }
 

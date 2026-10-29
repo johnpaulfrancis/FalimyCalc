@@ -175,9 +175,18 @@ else
                                 <span class="text-muted fw-normal small">(leave blank to remove PIN)</span>
                             </label>
                             <input type="password" class="form-control" maxlength="4"
-                                   @bind="NewPin" placeholder="••••"
+                                   @bind="NewPin" placeholder="@(IsEditing && EditingMember.PinHash != null ? "Leave blank to keep existing PIN" : "••••")"
                                    pattern="[0-9]{4}" inputmode="numeric" />
-                            <div class="form-text">PIN is required to enter this profile. Numbers only.</div>
+                            <div class="form-text">
+                                @if (IsEditing && EditingMember.PinHash != null)
+                                {
+                                    <span class="text-info">🔒 PIN is currently set. Enter new 4-digit PIN to change, or leave blank to keep it.</span>
+                                }
+                                else
+                                {
+                                    <span>PIN is required to enter this profile. Numbers only.</span>
+                                }
+                            </div>
                         </div>
                         <div class="col-12">
                             <div class="form-check">
@@ -354,7 +363,7 @@ else
             PasswordHash = member.PasswordHash
         };
         NewPassword = "";
-        NewPin = member.PinHash ?? "";
+        NewPin = ""; // Never pre-fill PIN — start blank so existing PIN is preserved unless changed
         FormError = null;
         ShowForm = true;
     }
@@ -387,12 +396,24 @@ else
             }
         }
 
-        // Set PIN
-        EditingMember.PinHash = string.IsNullOrWhiteSpace(NewPin) ? null : NewPin.Trim();
+        // Set PIN — hash it before storing; empty string means remove PIN
+        EditingMember.PinHash = string.IsNullOrWhiteSpace(NewPin) ? null : ExpenseService.HashPin(NewPin.Trim());
 
         // Hash password if provided (applies to both create & edit)
         if (!string.IsNullOrWhiteSpace(NewPassword))
             EditingMember.PasswordHash = ExpenseService.HashPassword(NewPassword);
+
+        // Guard: prevent the current logged-in Admin from demoting themselves if they're the last Admin
+        if (IsEditing && EditingMember.GlobalId == Session.CurrentUser?.GlobalId && EditingMember.Role != "Admin")
+        {
+            var adminCount = Members.Count(m => m.Role == "Admin");
+            if (adminCount <= 1)
+            {
+                FormError = "You cannot remove your own Admin role — at least one Admin must remain.";
+                IsSaving = false;
+                return;
+            }
+        }
 
         IsSaving = true;
         try

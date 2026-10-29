@@ -36,6 +36,16 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
 
     db.Database.ExecuteSqlRaw(@"
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('BankAccounts') AND name = 'IsJoint')
+BEGIN
+    ALTER TABLE BankAccounts ADD IsJoint BIT NOT NULL DEFAULT 0;
+END
+
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('BankAccounts') AND name = 'JointMemberGlobalIds')
+BEGIN
+    ALTER TABLE BankAccounts ADD JointMemberGlobalIds NVARCHAR(1000) NULL;
+END
+
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'FinancialGoals')
 BEGIN
     CREATE TABLE FinancialGoals (

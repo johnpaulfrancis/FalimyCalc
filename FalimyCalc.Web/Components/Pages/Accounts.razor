@@ -181,6 +181,11 @@
                     All (@AccountsWithBalances.Count)
                 </button>
                 <button type="button"
+                        class="btn btn-sm @(ActiveTypeFilter == "joint" ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick='() => ActiveTypeFilter = "joint"'>
+                    👥 Joint (@AccountsWithBalances.Count(a => a.Account.IsJoint))
+                </button>
+                <button type="button"
                         class="btn btn-sm @(ActiveTypeFilter == "savings" ? "btn-primary" : "btn-outline-secondary")"
                         @onclick='() => ActiveTypeFilter = "savings"'>
                     Savings
@@ -253,7 +258,13 @@ else
                                     <span class="fs-4">@(string.IsNullOrWhiteSpace(acc.Icon) ? "🏦" : acc.Icon)</span>
                                 </div>
                                 <div>
-                                    <h5 class="mb-0 fw-bold" style="color: var(--dash-text); font-size: 1.05rem;">@acc.AccountName</h5>
+                                    <h5 class="mb-0 fw-bold d-flex align-items-center gap-2" style="color: var(--dash-text); font-size: 1.05rem;">
+                                        <span>@acc.AccountName</span>
+                                        @if (acc.IsJoint)
+                                        {
+                                            <span class="badge bg-info-subtle text-info border border-info-subtle" style="font-size: 0.68rem;">👥 Joint</span>
+                                        }
+                                    </h5>
                                     <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
                                         @if (!string.IsNullOrWhiteSpace(acc.BankName))
                                         {
@@ -284,17 +295,32 @@ else
                             </div>
                         </div>
 
-                        <!-- Owner Badge -->
-                        @if (item.Owner != null)
-                        {
-                            <div class="d-flex align-items-center gap-2 mb-3">
-                                <span class="small text-muted">Profile:</span>
-                                <span class="member-chip" style="background-color: @(item.Owner.Colour ?? "#4f46e5");">
-                                    <span>@item.Owner.Avatar</span>
-                                    <span>@item.Owner.Name</span>
-                                </span>
-                            </div>
-                        }
+                        <!-- Owner & Joint Members Badge -->
+                        <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                            @if (item.Owner != null)
+                            {
+                                <div class="d-flex align-items-center gap-1">
+                                    <span class="small text-muted" style="font-size: 0.75rem;">Owner:</span>
+                                    <span class="member-chip" style="background-color: @(item.Owner.Colour ?? "#4f46e5"); font-size: 0.72rem; padding: 2px 8px;">
+                                        <span>@item.Owner.Avatar</span>
+                                        <span>@item.Owner.Name</span>
+                                    </span>
+                                </div>
+                            }
+                            @if (acc.IsJoint && item.JointMembers != null && item.JointMembers.Any())
+                            {
+                                <div class="d-flex align-items-center gap-1">
+                                    <span class="small text-muted" style="font-size: 0.75rem;">Joint:</span>
+                                    @foreach (var jm in item.JointMembers)
+                                    {
+                                        <span class="member-chip" style="background-color: @(jm.Colour ?? "#0ea5e9"); font-size: 0.72rem; padding: 2px 8px;">
+                                            <span>@jm.Avatar</span>
+                                            <span>@jm.Name</span>
+                                        </span>
+                                    }
+                                </div>
+                            }
+                        </div>
 
                         <!-- Financial Balances Section -->
                         <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
@@ -321,6 +347,22 @@ else
                                 <span>In: <strong class="text-success">+₹@item.TotalReceived.ToString("N0")</strong></span>
                                 <span>Out: <strong style="color: var(--c-rose, #f43f5e);">-₹@item.TotalSpent.ToString("N0")</strong></span>
                             </div>
+
+                            @if (acc.IsJoint && item.MemberSpentBreakdown != null && item.MemberSpentBreakdown.Count > 1)
+                            {
+                                <div class="pt-2 mt-2 border-top small" style="border-color: var(--dash-border) !important; font-size: 0.73rem;">
+                                    <span class="text-muted d-block mb-1 fw-semibold text-uppercase" style="font-size: 0.68rem;">Shared Outflows:</span>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        @foreach (var (mId, spent) in item.MemberSpentBreakdown)
+                                        {
+                                            var m = FamilyMembers.FirstOrDefault(f => f.GlobalId == mId);
+                                            <span class="text-muted">
+                                                @(m?.Avatar ?? "👤") @(m?.Name ?? "Member"): <strong style="color: var(--c-rose, #f43f5e);">-₹@spent.ToString("N0")</strong>
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            }
                         </div>
 
                         <!-- 1-Tap Quick Action Buttons on Account -->
@@ -424,6 +466,49 @@ else
                         <option value="Cash Wallet">Cash / Wallet</option>
                         <option value="Other">Other</option>
                     </select>
+                </div>
+
+                <!-- Joint Bank Account Switch & Co-Owners -->
+                <div class="col-12">
+                    <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="jointSwitch" @bind="FormIsJoint" />
+                            <label class="form-check-label fw-semibold" for="jointSwitch">
+                                👥 Joint Bank Account
+                            </label>
+                            <div class="small text-muted mt-1" style="font-size: 0.78rem;">
+                                Allow other family members to access this account, see transactions, deduct expenses, deposit income, and transfer funds.
+                            </div>
+                        </div>
+
+                        @if (FormIsJoint)
+                        {
+                            <div class="mt-3 pt-2 border-top" style="border-color: var(--dash-border) !important;">
+                                <label class="form-label fw-semibold small mb-2 d-block">
+                                    Select Co-Owners / Joint Members <span class="text-danger">*</span>
+                                </label>
+                                <div class="d-flex flex-wrap gap-2">
+                                    @foreach (var member in FamilyMembers.Where(m => m.GlobalId != FormMemberGlobalId))
+                                    {
+                                        var isChecked = FormJointMemberIds.Contains(member.GlobalId);
+                                        <button type="button"
+                                                class="btn btn-sm @(isChecked ? "btn-primary" : "btn-outline-secondary") d-flex align-items-center gap-1 rounded-pill px-3 py-1"
+                                                @onclick="() => ToggleJointMember(member.GlobalId)">
+                                            <span>@member.Avatar</span>
+                                            <span>@member.Name</span>
+                                            <span class="ms-1 fw-bold">@(isChecked ? "✓" : "+")</span>
+                                        </button>
+                                    }
+                                </div>
+                                @if (!FormJointMemberIds.Any())
+                                {
+                                    <span class="text-warning small d-block mt-2" style="font-size: 0.75rem;">
+                                        ⚠️ Please select at least one other family member to share this joint account with.
+                                    </span>
+                                }
+                            </div>
+                        }
+                    </div>
                 </div>
 
                 <!-- Initial Balance (supports negative numbers) -->
@@ -670,6 +755,8 @@ else
     private string FormColour = "#6366f1";
     private string FormIcon = "🏦";
     private Guid FormMemberGlobalId;
+    private bool FormIsJoint = false;
+    private HashSet<Guid> FormJointMemberIds = [];
 
     private BankAccount? EditingAccount;
     private BankAccount? AccountToDelete;
@@ -721,6 +808,9 @@ else
             // Type filter
             switch (ActiveTypeFilter)
             {
+                case "joint":
+                    query = query.Where(a => a.Account.IsJoint);
+                    break;
                 case "savings":
                     query = query.Where(a => string.Equals(a.Account.AccountType, "Savings", StringComparison.OrdinalIgnoreCase));
                     break;
@@ -779,6 +869,14 @@ else
         IsLoading = false;
     }
 
+    private void ToggleJointMember(Guid memberId)
+    {
+        if (FormJointMemberIds.Contains(memberId))
+            FormJointMemberIds.Remove(memberId);
+        else
+            FormJointMemberIds.Add(memberId);
+    }
+
     private void ShowAddForm()
     {
         EditingAccount = null;
@@ -790,6 +888,8 @@ else
         FormColour = "#6366f1";
         FormIcon = "🏦";
         FormMemberGlobalId = Session.CurrentUser?.GlobalId ?? Guid.Empty;
+        FormIsJoint = false;
+        FormJointMemberIds.Clear();
         FormError = null;
         ShowForm = true;
     }
@@ -805,6 +905,8 @@ else
         FormColour = acc.Colour ?? "#6366f1";
         FormIcon = acc.Icon ?? "🏦";
         FormMemberGlobalId = acc.MemberGlobalId;
+        FormIsJoint = acc.IsJoint;
+        FormJointMemberIds = acc.GetJointMemberGuids().ToHashSet();
         FormError = null;
         ShowForm = true;
     }
@@ -826,6 +928,12 @@ else
             return;
         }
 
+        if (FormIsJoint && !FormJointMemberIds.Any())
+        {
+            FormError = "Please select at least one other family member to share this joint account with.";
+            return;
+        }
+
         IsSaving = true;
 
         try
@@ -833,6 +941,10 @@ else
             var targetMemberId = Session.CurrentUser?.Role == "Admin"
                 ? (FormMemberGlobalId != Guid.Empty ? FormMemberGlobalId : (Session.CurrentUser?.GlobalId ?? Guid.Empty))
                 : (Session.CurrentUser?.GlobalId ?? Guid.Empty);
+
+            var jointIds = FormIsJoint && FormJointMemberIds.Any()
+                ? string.Join(",", FormJointMemberIds)
+                : null;
 
             if (EditingAccount is null)
             {
@@ -844,7 +956,9 @@ else
                     AccountType = FormAccountType,
                     AccountNumberSuffix = string.IsNullOrWhiteSpace(FormAccountNumberSuffix) ? null : FormAccountNumberSuffix.Trim(),
                     Colour = FormColour,
-                    Icon = FormIcon
+                    Icon = FormIcon,
+                    IsJoint = FormIsJoint,
+                    JointMemberGlobalIds = jointIds
                 }, targetMemberId);
             }
             else
@@ -859,7 +973,9 @@ else
                     AccountNumberSuffix = string.IsNullOrWhiteSpace(FormAccountNumberSuffix) ? null : FormAccountNumberSuffix.Trim(),
                     Colour = FormColour,
                     Icon = FormIcon,
-                    MemberGlobalId = targetMemberId
+                    MemberGlobalId = targetMemberId,
+                    IsJoint = FormIsJoint,
+                    JointMemberGlobalIds = jointIds
                 });
             }
 

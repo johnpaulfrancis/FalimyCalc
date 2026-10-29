@@ -139,11 +139,19 @@ public class AiAdvisorService
         var loansSummary = await _expenseService.GetLoansSummaryAsync(memberGlobalId);
         var (recentTx, totalTxCount, _) = await _expenseService.GetExpensesAsync(1, 100, memberGlobalId: memberGlobalId);
 
-        // 3. Runway Calculation
-        var monthlySpend = Math.Max(1m, kpis.CurrentMonthExpense);
-        double runwayMonths = kpis.TotalNetBalance > 0
-            ? (double)Math.Round(kpis.TotalNetBalance / monthlySpend, 1)
-            : 0.0;
+        // 3. Runway Calculation — short-circuit to avoid nonsensical result when no expenses recorded
+        double runwayMonths;
+        if (kpis.CurrentMonthExpense <= 0)
+        {
+            // No expenses: runway is effectively unlimited; cap display at 999 months
+            runwayMonths = kpis.TotalNetBalance > 0 ? 999.0 : 0.0;
+        }
+        else
+        {
+            runwayMonths = kpis.TotalNetBalance > 0
+                ? (double)Math.Round(kpis.TotalNetBalance / kpis.CurrentMonthExpense, 1)
+                : 0.0;
+        }
 
         // 4. 50/30/20 Rule Computation
         var split = Compute50_30_20(categoryTotals, kpis.CurrentMonthIncome, kpis.CurrentMonthExpense, goalsSummary.TotalSaved);
@@ -208,9 +216,10 @@ public class AiAdvisorService
                     executiveSummary = aiSummary;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Silently fallback to built-in deterministic summary
+                // Log the failure but silently fallback to built-in deterministic summary
+                Console.Error.WriteLine($"[AiAdvisor] Gemini enrichment failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -341,10 +350,14 @@ public class AiAdvisorService
         decimal totalExpense,
         decimal savedInGoals)
     {
-        var needsCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        // Broad keyword list — uses partial matching so "grocery", "Groceries", "food" all match as needs
+        var needsKeywords = new[]
         {
-            "Groceries", "Food & Dining", "Utilities", "Rent", "Housing", "Health", "Medical",
-            "Transport", "Fuel", "Bills", "Electricity", "Water", "Maintenance", "Education", "Insurance"
+            "grocer", "food", "dining", "restaurant", "meal", "utility", "utilities",
+            "rent", "housing", "mortgage", "health", "medical", "doctor", "hospital",
+            "transport", "travel", "fuel", "petrol", "bills", "electricity", "water",
+            "maintenance", "repair", "education", "school", "tuition", "insurance",
+            "internet", "mobile", "phone", "gas", "emi", "loan"
         };
 
         decimal needsTotal = 0;
@@ -352,7 +365,12 @@ public class AiAdvisorService
 
         foreach (var (catName, amount) in categoryTotals)
         {
-            if (needsCategories.Contains(catName))
+            var catLower = catName.ToLowerInvariant();
+            // Skip income/transfer pseudo-categories that may have crept in
+            if (catLower == "uncategorised" || catLower.Contains("transfer") || catLower.Contains("income"))
+                continue;
+
+            if (needsKeywords.Any(keyword => catLower.Contains(keyword)))
                 needsTotal += amount;
             else
                 wantsTotal += amount;
@@ -830,9 +848,10 @@ Output format: Return clean Markdown with bold numbers. Be polite, direct, and c
                 var geminiReply = await AskGeminiLiveAsync(report, userQuestion, geminiApiKey);
                 if (geminiReply != null) return geminiReply;
             }
-            catch
+            catch (Exception ex)
             {
-                // Fall back to rule-based financial reasoning engine
+                // Log the failure but fall back to rule-based financial reasoning engine
+                Console.Error.WriteLine($"[AiAdvisor] Gemini live call failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -945,12 +964,16 @@ FOLLOW_UP: Question 2
             else if (extractedAmount <= safeLiquidSurplus && report.NetCashFlow > 0)
             {
                 sb.AppendLine($"✅ **Yes, you can comfortably afford this!**");
-                sb.AppendLine($"Even after spending **₹{extractedAmount:N2}**, your remaining balance (**₹{(report.TotalNetBalance - extractedAmount):N2}**) maintains a safe **{(report.TotalNetBalance - extractedAmount) / Math.Max(1m, report.CurrentMonthExpense):F1} months** emergency runway.");
+                var remainingBalance = report.TotalNetBalance - extractedAmount;
+                var runwayAfter = report.CurrentMonthExpense > 0
+                    ? (remainingBalance / report.CurrentMonthExpense).ToString("F1") + " months"
+                    : "∞ (no expenses recorded)";
+                sb.AppendLine($"Even after spending **₹{extractedAmount:N2}**, your remaining balance (**₹{remainingBalance:N2}**) maintains a safe **{runwayAfter}** emergency runway.");
                 sb.AppendLine($"Additionally, your positive monthly surplus of **+₹{report.NetCashFlow:N2}** will replenish this within **{Math.Ceiling(extractedAmount / Math.Max(1m, report.NetCashFlow))} month(s)**.");
             }
             else
             {
-                sb.AppendLine($"⚠️ **Proceed with caution.** While you technically have **₹{report.TotalNetBalance:N2}** in your accounts, spending **₹{extractedAmount:N2}** would reduce your emergency buffer to **{(report.TotalNetBalance - extractedAmount) / Math.Max(1m, report.CurrentMonthExpense):F1} months**.");
+                sb.AppendLine($"⚠️ **Proceed with caution.** While you technically have **₹{report.TotalNetBalance:N2}** in your accounts, spending **₹{extractedAmount:N2}** would reduce your emergency buffer to **{(report.CurrentMonthExpense > 0 ? ((report.TotalNetBalance - extractedAmount) / report.CurrentMonthExpense).ToString("F1") + " months" : "∞")}**.");
                 sb.AppendLine($"Consider setting up a dedicated **Sinking Fund Goal** of ₹{extractedAmount / 3m:N0}/month over 3 months to purchase it stress-free.");
             }
 

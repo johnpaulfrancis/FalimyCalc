@@ -62,34 +62,34 @@
         }
     </div>
 
-    <!-- ── Transaction Type Switcher Tabs (Hidden during Edit Mode) ────────── -->
-    @if (!IsEditMode)
-    {
-        <div class="row g-2 mb-4">
-            <div class="col-4">
-                <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "expense" ? "active-expense" : "")"
-                        @onclick='() => SetTransactionType("expense")'>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="fs-4">💸</span>
-                        <div>
-                            <div class="fw-bold small">Expense</div>
-                            <div class="text-muted type-tab-sub">Money going out</div>
-                        </div>
+    <!-- ── Transaction Type Switcher Tabs ─────────────────────────────────── -->
+    <div class="row g-2 mb-4">
+        <div class="@(IsEditMode ? "col-6" : "col-4")">
+            <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "expense" ? "active-expense" : "")"
+                    @onclick='() => SetTransactionType("expense")'>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fs-4">💸</span>
+                    <div>
+                        <div class="fw-bold small">Expense</div>
+                        <div class="text-muted type-tab-sub">Money going out</div>
                     </div>
-                </button>
-            </div>
-            <div class="col-4">
-                <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "income" ? "active-income" : "")"
-                        @onclick='() => SetTransactionType("income")'>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="fs-4">📈</span>
-                        <div>
-                            <div class="fw-bold small">Income</div>
-                            <div class="text-muted type-tab-sub">Money coming in</div>
-                        </div>
+                </div>
+            </button>
+        </div>
+        <div class="@(IsEditMode ? "col-6" : "col-4")">
+            <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "income" ? "active-income" : "")"
+                    @onclick='() => SetTransactionType("income")'>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fs-4">📈</span>
+                    <div>
+                        <div class="fw-bold small">Income</div>
+                        <div class="text-muted type-tab-sub">Money coming in</div>
                     </div>
-                </button>
-            </div>
+                </div>
+            </button>
+        </div>
+        @if (!IsEditMode)
+        {
             <div class="col-4">
                 <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "transfer" ? "active-transfer" : "")"
                         @onclick='() => SetTransactionType("transfer")'>
@@ -102,8 +102,8 @@
                     </div>
                 </button>
             </div>
-        </div>
-    }
+        }
+    </div>
 
     @if (IsLoading)
     {
@@ -213,7 +213,7 @@
                                     {
                                         var bal = GetAccountBalance(acc.GlobalId);
                                         <option value="@acc.GlobalId">
-                                            @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                            @acc.Icon @acc.AccountName @(acc.IsJoint ? "(👥 Joint)" : "") (₹ @bal.ToString("N2"))
                                         </option>
                                     }
                                 </select>
@@ -231,7 +231,7 @@
                                     {
                                         var bal = GetAccountBalance(acc.GlobalId);
                                         <option value="@acc.GlobalId">
-                                            @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                            @acc.Icon @acc.AccountName @(acc.IsJoint ? "(👥 Joint)" : "") (₹ @bal.ToString("N2"))
                                         </option>
                                     }
                                 </select>
@@ -241,7 +241,7 @@
 
                         <!-- 5. Date & 6. Purpose -->
                         <div class="row g-3 mb-4">
-                            <div class="col-md-5">
+                            <div class="col-md-4">
                                 <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
                                     5. Transfer Date <span class="text-danger">*</span>
                                 </label>
@@ -254,7 +254,7 @@
                                 </div>
                             </div>
 
-                            <div class="col-md-7">
+                            <div class="col-md-8">
                                 <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
                                     6. Purpose / Description
                                 </label>
@@ -547,7 +547,7 @@
                             <!-- 5. Date & 6. Bank Account Selector -->
                             <div class="row g-3 mb-4">
                                 <!-- Date -->
-                                <div class="col-md-5">
+                                <div class="col-md-4">
                                     <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
                                         5. Date <span class="text-danger">*</span>
                                     </label>
@@ -573,12 +573,12 @@
                                 </div>
 
                                 <!-- Bank Account Selector -->
-                                <div class="col-md-7">
-                                    <div class="d-flex justify-content-between align-items-center mb-1">
-                                        <label class="form-label fw-semibold small text-muted text-uppercase mb-0">
+                                <div class="col-md-8">
+                                    <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+                                        <label class="form-label fw-semibold small text-muted text-uppercase mb-0 text-nowrap">
                                             6. @(SelectedType == "income" ? "Deposited Into Bank Account" : "Paid From Bank Account") <span class="text-danger">*</span>
                                         </label>
-                                        <div class="d-flex align-items-center gap-2">
+                                        <div class="d-flex align-items-center gap-2 text-nowrap ms-auto" style="font-size: 0.8rem;">
                                             <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-muted"
                                                     @onclick="RefreshAccountsAsync" title="Reload accounts after creating one">
                                                 🔄 Refresh
@@ -601,30 +601,19 @@
                                     }
                                     else
                                     {
-                                        <select class="form-select mb-2" @bind="SelectedAccountString" @bind:after="OnAccountSelected">
+                                        <select class="form-select" @bind="SelectedAccountString" @bind:after="OnAccountSelected">
                                             <option value="">— Select Bank Account —</option>
                                             @foreach (var acc in AvailableBankAccountsList)
                                             {
                                                 var bal = GetAccountBalance(acc.GlobalId);
                                                 <option value="@acc.GlobalId">
-                                                    @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                                    @acc.Icon @acc.AccountName @(acc.IsJoint ? "(👥 Joint)" : "") (₹ @bal.ToString("N2"))
                                                 </option>
                                             }
                                         </select>
-
-                                        <!-- Quick 1-Tap Account Pills -->
-                                        <div class="d-flex flex-wrap gap-1">
-                                            @foreach (var acc in AvailableBankAccountsList)
-                                            {
-                                                var isSelected = Model.AccountGlobalId == acc.GlobalId;
-                                                <button type="button"
-                                                        class="btn btn-sm @(isSelected ? "btn-primary" : "btn-outline-secondary") py-0 px-2 quick-chip d-flex align-items-center gap-1"
-                                                        @onclick="() => SelectBankAccount(acc)">
-                                                    <span>@(string.IsNullOrWhiteSpace(acc.Icon) ? "🏦" : acc.Icon)</span>
-                                                    <span>@acc.AccountName</span>
-                                                </button>
-                                            }
-                                        </div>
+                                        <span class="small text-muted d-block mt-1" style="font-size: 0.72rem;">
+                                            @(SelectedType == "income" ? "Account receiving this deposit" : "Account paying for this transaction")
+                                        </span>
                                     }
                                 </div>
                             </div>
@@ -1046,7 +1035,7 @@
         {
             if (Guid.TryParse(SelectedMemberId, out var mId))
             {
-                var filtered = AllBankAccounts.Where(a => a.MemberGlobalId == mId).ToList();
+                var filtered = AllBankAccounts.Where(a => a.MemberGlobalId == mId || a.HasMemberAccess(mId)).ToList();
                 if (filtered.Any()) return filtered;
             }
             return AllBankAccounts;
@@ -1257,6 +1246,16 @@
             "transfer" => "transfer",
             _ => "expense"
         };
+
+        if (SelectedType == "income" && string.IsNullOrEmpty(Model.Subcategory))
+        {
+            Model.Subcategory = "Income";
+        }
+        else if (SelectedType == "expense" && string.Equals(Model.Subcategory, "Income", StringComparison.OrdinalIgnoreCase))
+        {
+            Model.Subcategory = null;
+        }
+
         ErrorMessage = null;
     }
 
@@ -1446,10 +1445,33 @@
 
             if (SelectedType == "income")
             {
-                if (string.IsNullOrEmpty(tags)) tags = "income";
-                else if (!tags.Contains("income", StringComparison.OrdinalIgnoreCase)) tags += ",income";
+                var tagList = (tags ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(t => !t.Equals("expense", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
+                if (!tagList.Any(t => t.Equals("income", StringComparison.OrdinalIgnoreCase)))
+                    tagList.Add("income");
+
+                tags = string.Join(",", tagList);
                 if (string.IsNullOrEmpty(subcat)) subcat = "Income";
+            }
+            else
+            {
+                // Expense mode: strip "income" and "salary" from tags and subcategory
+                var tagList = (tags ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(t => !t.Equals("income", StringComparison.OrdinalIgnoreCase) &&
+                                !t.Equals("salary", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                tags = tagList.Count > 0 ? string.Join(",", tagList) : null;
+
+                if (string.Equals(subcat, "Income", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(subcat, "Salary", StringComparison.OrdinalIgnoreCase))
+                {
+                    subcat = null;
+                }
             }
 
             if (IsEditMode)

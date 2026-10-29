@@ -8,6 +8,7 @@
 @inject ExpenseService ExpenseService
 @inject UserSessionService Session
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>AI Financial Advisor & Analyzer — FalimyCalc</PageTitle>
 
@@ -654,39 +655,84 @@ else if (Report != null)
 <!-- ── Gemini API Key Configuration Modal ─────────────────────────────────── -->
 @if (ShowApiKeyModal)
 {
-    <div class="modal-backdrop-custom" @onclick="() => ShowApiKeyModal = false"></div>
-    <div class="modal-panel shadow-lg animate-in" style="max-width: 480px;">
-        <div class="modal-panel-header">
-            <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
-                <span>⚙️ Gemini Live AI Configuration</span>
-            </h5>
-            <button type="button" class="btn-close" @onclick="() => ShowApiKeyModal = false"></button>
-        </div>
-        <div class="modal-panel-body">
-            <p class="small text-muted mb-3">
-                FalimyCalc includes a <strong>built-in intelligent Financial Reasoning Engine</strong> that works 100% offline with zero cost.
-                If you wish to augment advice with live natural language generation from Google Gemini (e.g. Gemini 2.5 Flash), paste your API key below.
-            </p>
-
-            <div class="mb-3">
-                <label class="form-label small fw-semibold text-uppercase text-muted">Gemini API Key (Optional)</label>
-                <input type="password" class="form-control" placeholder="AIzaSy..." @bind="GeminiApiKey" />
-                <span class="small text-muted mt-1 d-block" style="font-size: 0.72rem;">
-                    Key is stored in your active session. You can obtain a free key from <a href="https://aistudio.google.com/" target="_blank" class="text-primary">Google AI Studio</a>.
-                </span>
+    <div class="modal-backdrop-custom" @onclick="() => ShowApiKeyModal = false">
+        <div class="modal-panel shadow-lg animate-in" style="max-width: 480px;" @onclick:stopPropagation="true">
+            <div class="modal-panel-header">
+                <h5 class="mb-0 fw-bold d-flex align-items-center gap-2">
+                    <span>⚙️ Gemini Live AI Configuration</span>
+                </h5>
+                <button type="button" class="btn-close" @onclick="() => ShowApiKeyModal = false"></button>
             </div>
+            <div class="modal-panel-body">
+                <p class="small text-muted mb-3">
+                    FalimyCalc includes a <strong>built-in intelligent Financial Reasoning Engine</strong> that works 100% offline with zero cost.
+                    If you wish to augment advice with live natural language generation from Google Gemini (e.g. Gemini 2.5 Flash), paste your API key below.
+                </p>
 
-            <div class="d-flex justify-content-end gap-2 mt-4">
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ShowApiKeyModal = false">
-                    Cancel
-                </button>
-                <button type="button" class="btn btn-primary btn-sm px-3" @onclick="SaveApiKeyAndRefreshAsync">
-                    Save & Re-Analyze
-                </button>
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-uppercase text-muted">Gemini API Key (Optional)</label>
+                    <input type="password" class="form-control" placeholder="AIzaSy..." @bind="GeminiApiKey" />
+                    <span class="small text-muted mt-1 d-block" style="font-size: 0.72rem;">
+                        Key is safely stored in your browser storage. You can obtain a free key from <a href="https://aistudio.google.com/" target="_blank" class="text-primary">Google AI Studio</a>.
+                    </span>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4">
+                    <div>
+                        @if (!string.IsNullOrWhiteSpace(GeminiApiKey))
+                        {
+                            <button type="button" class="btn btn-outline-danger btn-sm" @onclick="ClearApiKeyAsync">
+                                Clear Key
+                            </button>
+                        }
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ShowApiKeyModal = false">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-primary btn-sm px-3" @onclick="SaveApiKeyAndRefreshAsync">
+                            Save & Re-Analyze
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 }
+
+<style>
+    .modal-panel {
+        background: var(--dash-surface, #ffffff);
+        color: var(--dash-text-main, #1e293b);
+        border: 1px solid var(--dash-border, #e2e8f0);
+        border-radius: 16px;
+        width: 100%;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.25), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        z-index: 1060;
+    }
+    .modal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.1rem 1.25rem;
+        border-bottom: 1px solid var(--dash-border, #e2e8f0);
+    }
+    .modal-panel-body {
+        padding: 1.25rem;
+        overflow-y: auto;
+    }
+    .animate-in {
+        animation: scaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes scaleIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+    }
+</style>
 
 @code {
     private bool IsLoading = true;
@@ -720,6 +766,13 @@ else if (Report != null)
 
     protected override async Task OnInitializedAsync()
     {
+        // Auth guard — redirect to login if not authenticated
+        if (!Session.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login?returnUrl=/ai-advisor", forceLoad: false);
+            return;
+        }
+
         FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
         _showAllMembers = false; // Default admin view to their personal profile
         await LoadAnalysisAsync();
@@ -777,9 +830,55 @@ else if (Report != null)
         await LoadAnalysisAsync();
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                var storedKey = await JS.InvokeAsync<string?>("localStorage.getItem", "falimycalc_gemini_api_key");
+                if (!string.IsNullOrWhiteSpace(storedKey) && storedKey != GeminiApiKey)
+                {
+                    GeminiApiKey = storedKey;
+                    await LoadAnalysisAsync();
+                }
+            }
+            catch
+            {
+                // Silently handle if localStorage is unavailable
+            }
+        }
+    }
+
     private async Task SaveApiKeyAndRefreshAsync()
     {
         ShowApiKeyModal = false;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(GeminiApiKey))
+            {
+                await JS.InvokeVoidAsync("localStorage.removeItem", "falimycalc_gemini_api_key");
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("localStorage.setItem", "falimycalc_gemini_api_key", GeminiApiKey.Trim());
+            }
+        }
+        catch { }
+
+        await LoadAnalysisAsync();
+    }
+
+    private async Task ClearApiKeyAsync()
+    {
+        GeminiApiKey = "";
+        ShowApiKeyModal = false;
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.removeItem", "falimycalc_gemini_api_key");
+        }
+        catch { }
+
         await LoadAnalysisAsync();
     }
 
@@ -821,24 +920,26 @@ else if (Report != null)
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
 
-        // Basic clean HTML escaping & bold / list replacements for pleasant chat formatting
-        var html = System.Net.WebUtility.HtmlEncode(text);
-        html = html.Replace("&lt;h3&gt;", "<h5 class=\"fw-bold mb-2\" style=\"color: var(--dash-text);\">")
-                   .Replace("&lt;/h3&gt;", "</h5>")
-                   .Replace("&lt;strong&gt;", "<strong>")
-                   .Replace("&lt;/strong&gt;", "</strong>")
-                   .Replace("&lt;em&gt;", "<em>")
-                   .Replace("&lt;/em&gt;", "</em>")
-                   .Replace("&lt;code&gt;", "<code>")
-                   .Replace("&lt;/code&gt;", "</code>");
+        // Process markdown directly without double encode/decode dance:
+        // 1. Convert markdown to HTML first (on raw text)
+        // 2. Then HTML-encode only remaining plain-text segments
 
-        // Convert double asterisks to bold
-        html = System.Text.RegularExpressions.Regex.Replace(html, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
-        // Convert single asterisks to italic
-        html = System.Text.RegularExpressions.Regex.Replace(html, @"\*(.+?)\*", "<em>$1</em>");
-        // Convert headers ### to h6
-        html = System.Text.RegularExpressions.Regex.Replace(html, @"###\s*(.+)", "<h6 class=\"fw-bold mb-2 mt-1\">$1</h6>");
+        // Convert headers (### Heading)
+        text = System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"^###\s*(.+)$",
+            "<h6 class=\"fw-bold mb-2 mt-1\">$1</h6>",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
 
-        return html;
+        // Convert bold (**text**)
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
+
+        // Convert italic (*text*) — only single asterisks not preceded/followed by another
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", "<em>$1</em>");
+
+        // Convert newlines to <br> for chat display
+        text = text.Replace("\r\n", "\n").Replace("\n", "<br>");
+
+        return text;
     }
 }

@@ -100,7 +100,23 @@ public class ExpenseService
             .Where(e => !e.IsDeleted);
 
         if (memberGlobalId.HasValue)
-            query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+        {
+            var mStr = memberGlobalId.Value.ToString();
+            var jointAccountIds = await db.BankAccounts
+                .Where(a => !a.IsDeleted && a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr))
+                .Select(a => a.GlobalId)
+                .ToListAsync();
+
+            if (jointAccountIds.Any())
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value ||
+                                         (e.AccountGlobalId.HasValue && jointAccountIds.Contains(e.AccountGlobalId.Value)));
+            }
+            else
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+            }
+        }
 
         if (accountGlobalId.HasValue)
             query = query.Where(e => e.AccountGlobalId == accountGlobalId.Value);
@@ -175,7 +191,23 @@ public class ExpenseService
             .Where(e => !e.IsDeleted);
 
         if (memberGlobalId.HasValue)
-            query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+        {
+            var mStr = memberGlobalId.Value.ToString();
+            var jointAccountIds = await db.BankAccounts
+                .Where(a => !a.IsDeleted && a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr))
+                .Select(a => a.GlobalId)
+                .ToListAsync();
+
+            if (jointAccountIds.Any())
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value ||
+                                         (e.AccountGlobalId.HasValue && jointAccountIds.Contains(e.AccountGlobalId.Value)));
+            }
+            else
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+            }
+        }
 
         if (!string.IsNullOrWhiteSpace(searchTerm))
             query = query.Where(e => e.Description.Contains(searchTerm));
@@ -358,6 +390,66 @@ public class ExpenseService
         return true;
     }
 
+    /// <summary>
+    /// Converts an existing transaction between Expense and Income.
+    /// targetType: "income" or "expense"
+    /// </summary>
+    public async Task<Expense?> ConvertTransactionTypeAsync(Guid globalId, string targetType)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var expense = await db.Expenses
+            .Include(e => e.Category)
+            .Include(e => e.BankAccount)
+            .FirstOrDefaultAsync(e => e.GlobalId == globalId && !e.IsDeleted);
+
+        if (expense is null) return null;
+
+        var wantIncome = string.Equals(targetType, "income", StringComparison.OrdinalIgnoreCase);
+
+        if (wantIncome)
+        {
+            // Convert to Income: add "income" tag, ensure subcategory is set if empty
+            var tagList = (expense.Tags ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(t => !t.Equals("expense", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (!tagList.Any(t => t.Equals("income", StringComparison.OrdinalIgnoreCase)))
+                tagList.Add("income");
+
+            expense.Tags = string.Join(",", tagList);
+            if (string.IsNullOrEmpty(expense.Subcategory))
+                expense.Subcategory = "Income";
+
+            expense.Amount = Math.Abs(expense.Amount);
+        }
+        else
+        {
+            // Convert to Expense: remove "income" and "salary" from tags and subcategory
+            var tagList = (expense.Tags ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(t => !t.Equals("income", StringComparison.OrdinalIgnoreCase) &&
+                            !t.Equals("salary", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            expense.Tags = tagList.Count > 0 ? string.Join(",", tagList) : null;
+
+            if (string.Equals(expense.Subcategory, "Income", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(expense.Subcategory, "Salary", StringComparison.OrdinalIgnoreCase))
+            {
+                expense.Subcategory = null;
+            }
+
+            expense.Amount = Math.Abs(expense.Amount);
+        }
+
+        expense.ModifiedAt = DateTime.UtcNow;
+        expense.DeviceId = "web";
+
+        await db.SaveChangesAsync();
+        return expense;
+    }
+
     // ── Transaction Classification Helpers ────────────────────────────────────
 
     public static bool IsIncomeTransaction(Expense e)
@@ -404,7 +496,9 @@ public class ExpenseService
         decimal TotalSpent,
         decimal CurrentBalance,
         int TransactionCount,
-        decimal TotalReceived = 0m
+        decimal TotalReceived = 0m,
+        List<FamilyMember>? JointMembers = null,
+        Dictionary<Guid, decimal>? MemberSpentBreakdown = null
     );
 
     public record TransferRequest(
@@ -435,11 +529,10 @@ public class ExpenseService
         if (destAcc == null)
             throw new InvalidOperationException("Destination bank account not found.");
 
-        if (sourceAcc.MemberGlobalId != destAcc.MemberGlobalId)
-            throw new InvalidOperationException("Transfers must be between bank accounts of the same profile.");
-
+        // Cross-member transfers are allowed so family members can transfer between each other's accounts
         var memberId = request.MemberGlobalId ?? sourceAcc.MemberGlobalId;
-        var transferTag = $"ref:{Guid.NewGuid():N}"[..12];
+        // Use 16 hex chars from GUID for sufficient uniqueness (2^64 combinations)
+        var transferTag = $"ref:{Guid.NewGuid():N}"[..20];
         var descOut = string.IsNullOrWhiteSpace(request.Description)
             ? $"Transfer to {destAcc.AccountName}"
             : request.Description.Trim();
@@ -502,7 +595,11 @@ public class ExpenseService
         var query = db.BankAccounts.Where(a => !a.IsDeleted);
 
         if (memberGlobalId.HasValue)
-            query = query.Where(a => a.MemberGlobalId == memberGlobalId.Value);
+        {
+            var mStr = memberGlobalId.Value.ToString();
+            query = query.Where(a => a.MemberGlobalId == memberGlobalId.Value ||
+                                     (a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr)));
+        }
 
         return await query.OrderBy(a => a.AccountName).ToListAsync();
     }
@@ -545,6 +642,8 @@ public class ExpenseService
         existing.AccountNumberSuffix = updated.AccountNumberSuffix?.Trim();
         existing.Colour = string.IsNullOrWhiteSpace(updated.Colour) ? "#6366f1" : updated.Colour;
         existing.Icon = string.IsNullOrWhiteSpace(updated.Icon) ? "🏦" : updated.Icon;
+        existing.IsJoint = updated.IsJoint;
+        existing.JointMemberGlobalIds = updated.JointMemberGlobalIds;
         if (updated.MemberGlobalId != Guid.Empty)
             existing.MemberGlobalId = updated.MemberGlobalId;
         existing.ModifiedAt = DateTime.UtcNow;
@@ -584,15 +683,16 @@ public class ExpenseService
 
         var accountsQuery = db.BankAccounts.Where(a => !a.IsDeleted);
         if (memberGlobalId.HasValue)
-            accountsQuery = accountsQuery.Where(a => a.MemberGlobalId == memberGlobalId.Value);
+        {
+            var mStr = memberGlobalId.Value.ToString();
+            accountsQuery = accountsQuery.Where(a => a.MemberGlobalId == memberGlobalId.Value ||
+                                                     (a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr)));
+        }
 
         var accounts = await accountsQuery.OrderBy(a => a.AccountName).ToListAsync();
 
-        var expensesQuery = db.Expenses.Where(e => !e.IsDeleted);
-        if (memberGlobalId.HasValue)
-            expensesQuery = expensesQuery.Where(e => e.MemberGlobalId == memberGlobalId.Value);
-
-        var expenses = await expensesQuery.ToListAsync();
+        // Include all transactions for balance calculation across accounts
+        var expenses = await db.Expenses.Where(e => !e.IsDeleted).ToListAsync();
 
         var results = new List<BankAccountWithBalance>();
 
@@ -608,6 +708,25 @@ public class ExpenseService
             var currentBal = acc.InitialBalance + totalReceived - totalSpent; // Can be negative!
             var member = memberMap.TryGetValue(acc.MemberGlobalId, out var m) ? m : null;
 
+            List<FamilyMember> jointMembers = [];
+            if (acc.IsJoint)
+            {
+                foreach (var jId in acc.GetJointMemberGuids())
+                {
+                    if (memberMap.TryGetValue(jId, out var jm))
+                    {
+                        jointMembers.Add(jm);
+                    }
+                }
+            }
+
+            Dictionary<Guid, decimal> memberSpentBreakdown = new();
+            var spendExpenses = matchedExpenses.Where(e => !IsIncomeTransaction(e) && !IsTransferInTransaction(e) && e.MemberGlobalId.HasValue);
+            foreach (var group in spendExpenses.GroupBy(e => e.MemberGlobalId!.Value))
+            {
+                memberSpentBreakdown[group.Key] = group.Sum(e => e.Amount);
+            }
+
             results.Add(new BankAccountWithBalance(
                 acc,
                 member,
@@ -615,7 +734,9 @@ public class ExpenseService
                 totalSpent,
                 currentBal,
                 matchedExpenses.Count,
-                totalReceived
+                totalReceived,
+                jointMembers,
+                memberSpentBreakdown
             ));
         }
 
@@ -749,10 +870,27 @@ public class ExpenseService
         var query = db.Expenses
             .Where(e => !e.IsDeleted
                      && e.TransactionDate.Year == year
-                     && e.TransactionDate.Month == month);
+                     && e.TransactionDate.Month == month
+                     && (e.Tags == null || (!e.Tags.Contains("income") && !e.Tags.Contains("transfer-out") && !e.Tags.Contains("transfer-in"))));
 
         if (memberGlobalId.HasValue)
-            query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+        {
+            var mStr = memberGlobalId.Value.ToString();
+            var jointAccountIds = await db.BankAccounts
+                .Where(a => !a.IsDeleted && a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr))
+                .Select(a => a.GlobalId)
+                .ToListAsync();
+
+            if (jointAccountIds.Any())
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value ||
+                                         (e.AccountGlobalId.HasValue && jointAccountIds.Contains(e.AccountGlobalId.Value)));
+            }
+            else
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+            }
+        }
 
         return await query.SumAsync(e => (decimal?)e.Amount) ?? 0m;
     }
@@ -764,10 +902,27 @@ public class ExpenseService
             .Include(e => e.Category)
             .Where(e => !e.IsDeleted
                      && e.TransactionDate.Year == year
-                     && e.TransactionDate.Month == month);
+                     && e.TransactionDate.Month == month
+                     && (e.Tags == null || (!e.Tags.Contains("income") && !e.Tags.Contains("transfer-out") && !e.Tags.Contains("transfer-in"))));
 
         if (memberGlobalId.HasValue)
-            query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+        {
+            var mStr = memberGlobalId.Value.ToString();
+            var jointAccountIds = await db.BankAccounts
+                .Where(a => !a.IsDeleted && a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr))
+                .Select(a => a.GlobalId)
+                .ToListAsync();
+
+            if (jointAccountIds.Any())
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value ||
+                                         (e.AccountGlobalId.HasValue && jointAccountIds.Contains(e.AccountGlobalId.Value)));
+            }
+            else
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+            }
+        }
 
         return await query
             .GroupBy(e => e.Category != null ? e.Category.Name : "Uncategorised")
@@ -782,10 +937,29 @@ public class ExpenseService
         await using var db = await _dbFactory.CreateDbContextAsync();
         var query = db.Expenses
             .Include(e => e.Category)
-            .Where(e => !e.IsDeleted && e.TransactionDate.Year == year && e.TransactionDate.Month == month);
+            .Where(e => !e.IsDeleted
+                     && e.TransactionDate.Year == year
+                     && e.TransactionDate.Month == month
+                     && (e.Tags == null || (!e.Tags.Contains("income") && !e.Tags.Contains("transfer-out") && !e.Tags.Contains("transfer-in"))));
 
         if (memberGlobalId.HasValue)
-            query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+        {
+            var mStr = memberGlobalId.Value.ToString();
+            var jointAccountIds = await db.BankAccounts
+                .Where(a => !a.IsDeleted && a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr))
+                .Select(a => a.GlobalId)
+                .ToListAsync();
+
+            if (jointAccountIds.Any())
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value ||
+                                         (e.AccountGlobalId.HasValue && jointAccountIds.Contains(e.AccountGlobalId.Value)));
+            }
+            else
+            {
+                query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
+            }
+        }
 
         var expenses = await query.ToListAsync();
 
@@ -816,7 +990,8 @@ public class ExpenseService
         var memberMap = members.ToDictionary(m => m.GlobalId);
 
         var expenses = await db.Expenses
-            .Where(e => !e.IsDeleted && e.TransactionDate.Year == year && e.TransactionDate.Month == month)
+            .Where(e => !e.IsDeleted && e.TransactionDate.Year == year && e.TransactionDate.Month == month
+                     && (e.Tags == null || (!e.Tags.Contains("income") && !e.Tags.Contains("transfer-out") && !e.Tags.Contains("transfer-in"))))
             .ToListAsync();
 
         var monthTotal = expenses.Sum(e => e.Amount);
@@ -854,7 +1029,10 @@ public class ExpenseService
         {
             var date = current.AddMonths(-i);
             var query = db.Expenses
-                .Where(e => !e.IsDeleted && e.TransactionDate.Year == date.Year && e.TransactionDate.Month == date.Month);
+                .Where(e => !e.IsDeleted
+                         && e.TransactionDate.Year == date.Year
+                         && e.TransactionDate.Month == date.Month
+                         && (e.Tags == null || (!e.Tags.Contains("income") && !e.Tags.Contains("transfer-out") && !e.Tags.Contains("transfer-in"))));
 
             if (memberGlobalId.HasValue)
                 query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value);
@@ -1211,7 +1389,7 @@ public class ExpenseService
         if (member is null) return false;
         if (string.IsNullOrEmpty(member.PinHash)) return true; // No PIN set
 
-        return member.PinHash == pin;
+        return VerifyPin(member.PinHash, pin);
     }
 
     // ── Login / Password ───────────────────────────────────────────────────
@@ -1289,7 +1467,7 @@ public class ExpenseService
     }
 
     /// <summary>
-    /// Sets the PIN for a family member. Stores it as plain text (4-digit PIN).
+    /// Sets the PIN for a family member. Stores it as a SHA-256 hex hash for security.
     /// </summary>
     public async Task<bool> SetPinAsync(Guid memberGlobalId, string pin)
     {
@@ -1297,10 +1475,34 @@ public class ExpenseService
         var member = await db.FamilyMembers.FirstOrDefaultAsync(m => m.GlobalId == memberGlobalId);
         if (member is null) return false;
 
-        member.PinHash = string.IsNullOrWhiteSpace(pin) ? null : pin.Trim();
+        member.PinHash = string.IsNullOrWhiteSpace(pin) ? null : HashPin(pin.Trim());
         member.ModifiedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
         return true;
+    }
+
+    /// <summary>
+    /// Hashes a 4-digit PIN using SHA-256. Returns a hex string.
+    /// </summary>
+    public static string HashPin(string pin)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(pin);
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Verifies a plain PIN against a stored hash. Supports both plain-text legacy PINs and hashed PINs.
+    /// </summary>
+    public static bool VerifyPin(string storedPinHash, string enteredPin)
+    {
+        if (string.IsNullOrEmpty(storedPinHash) || string.IsNullOrEmpty(enteredPin)) return false;
+        if (storedPinHash.Length == 4 && storedPinHash.All(char.IsDigit))
+            return storedPinHash == enteredPin;
+        var enteredHash = HashPin(enteredPin);
+        return CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(storedPinHash),
+            System.Text.Encoding.UTF8.GetBytes(enteredHash));
     }
 
     /// <summary>
@@ -1396,6 +1598,9 @@ public class ExpenseService
 
         db.FinancialGoals.Add(goal);
 
+        // Save goal first so goal.Id is assigned by the database before creating the FK reference
+        await db.SaveChangesAsync();
+
         // If an initial amount was specified, record an initial contribution record
         if (goal.CurrentAmount > 0)
         {
@@ -1403,7 +1608,7 @@ public class ExpenseService
             {
                 GlobalId = Guid.NewGuid(),
                 GoalGlobalId = goal.GlobalId,
-                FinancialGoalId = goal.Id,
+                FinancialGoalId = goal.Id,  // Now correctly populated after SaveChangesAsync
                 Amount = goal.CurrentAmount,
                 TransactionDate = DateTime.Today,
                 Type = "Deposit",
@@ -1415,9 +1620,9 @@ public class ExpenseService
                 DeviceId = "web"
             };
             db.GoalContributions.Add(contribution);
+            await db.SaveChangesAsync();
         }
 
-        await db.SaveChangesAsync();
         return goal;
     }
 
@@ -1786,9 +1991,14 @@ public class ExpenseService
 
         db.Expenses.Add(expense);
 
-        // 2. Advance the NextDueDate
+        // 2. Advance the NextDueDate — loop past today in case item is multiple periods overdue
         item.LastPaidDate = pDate;
-        item.NextDueDate = CalculateNextDueDate(item.NextDueDate, item.Frequency);
+        var nextDue = item.NextDueDate;
+        do
+        {
+            nextDue = CalculateNextDueDate(nextDue, item.Frequency);
+        } while (nextDue.Date <= DateTime.Today);
+        item.NextDueDate = nextDue;
         item.ModifiedAt = DateTime.UtcNow;
 
         await db.SaveChangesAsync();
@@ -1969,7 +2179,6 @@ public class ExpenseService
         loan.DeviceId = "web";
         loan.Colour = string.IsNullOrWhiteSpace(loan.Colour) ? "#f43f5e" : loan.Colour;
         loan.Icon = string.IsNullOrWhiteSpace(loan.Icon) ? "💳" : loan.Icon;
-        loan.Status = loan.OutstandingBalance <= 0 && loan.PrincipalAmount > 0 ? "Closed" : "Active";
 
         if (memberGlobalId.HasValue && !loan.MemberGlobalId.HasValue)
         {
@@ -1991,10 +2200,14 @@ public class ExpenseService
             loan.EmiAmount = CalculateEmi(loan.PrincipalAmount, loan.InterestRate, loan.TenureMonths);
         }
 
+        // Fix outstanding balance BEFORE determining status
         if (loan.OutstandingBalance <= 0 && loan.PrincipalAmount > 0)
         {
             loan.OutstandingBalance = loan.PrincipalAmount;
         }
+
+        // Status determined AFTER balance is corrected
+        loan.Status = loan.OutstandingBalance <= 0 && loan.PrincipalAmount > 0 ? "Closed" : "Active";
 
         db.Loans.Add(loan);
         await db.SaveChangesAsync();
