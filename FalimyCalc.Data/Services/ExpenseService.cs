@@ -238,6 +238,171 @@ public class ExpenseService
             .FirstOrDefaultAsync(e => e.GlobalId == globalId && !e.IsDeleted);
     }
 
+    /// <summary>
+    /// Checks for potential duplicate transactions with the same amount on the same day
+    /// with an almost identical or similar description.
+    /// </summary>
+    public async Task<List<Expense>> FindPotentialDuplicateExpensesAsync(
+        decimal amount,
+        DateTime transactionDate,
+        string description,
+        Guid? memberGlobalId = null,
+        Guid? excludeGlobalId = null)
+    {
+        if (amount == 0m || string.IsNullOrWhiteSpace(description))
+            return [];
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var dayStart = transactionDate.Date;
+        var dayEnd = dayStart.AddDays(1);
+        var targetAmount = Math.Abs(amount);
+
+        // Fetch candidate transactions for the same day
+        var query = db.Expenses
+            .Include(e => e.Category)
+            .Include(e => e.BankAccount)
+            .Where(e => !e.IsDeleted &&
+                        e.TransactionDate >= dayStart &&
+                        e.TransactionDate < dayEnd);
+
+        if (excludeGlobalId.HasValue)
+        {
+            query = query.Where(e => e.GlobalId != excludeGlobalId.Value);
+        }
+
+        if (memberGlobalId.HasValue)
+        {
+            query = query.Where(e => e.MemberGlobalId == memberGlobalId.Value || e.MemberGlobalId == null);
+        }
+
+        var candidates = await query.ToListAsync();
+
+        var duplicates = new List<Expense>();
+        foreach (var candidate in candidates)
+        {
+            // Amount match (+/- 0.01 tolerance)
+            if (Math.Abs(Math.Abs(candidate.Amount) - targetAmount) <= 0.01m)
+            {
+                if (AreDescriptionsAlmostSame(candidate.Description, description))
+                {
+                    duplicates.Add(candidate);
+                }
+            }
+        }
+
+        return duplicates;
+    }
+
+    /// <summary>
+    /// Determines whether two transaction descriptions are identical or almost the same,
+    /// accounting for casing, emojis, punctuation, token overlaps, and minor typos.
+    /// </summary>
+    public static bool AreDescriptionsAlmostSame(string? text1, string? text2)
+    {
+        if (string.IsNullOrWhiteSpace(text1) || string.IsNullOrWhiteSpace(text2))
+            return false;
+
+        static string Clean(string input)
+        {
+            var sb = new StringBuilder();
+            foreach (char c in input.Trim().ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(c) || char.IsWhiteSpace(c))
+                    sb.Append(c);
+            }
+            return System.Text.RegularExpressions.Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
+        }
+
+        var s1 = Clean(text1);
+        var s2 = Clean(text2);
+
+        if (string.IsNullOrEmpty(s1) || string.IsNullOrEmpty(s2))
+            return false;
+
+        // 1. Exact match after cleaning
+        if (string.Equals(s1, s2, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // 2. Substring match
+        if (s1.Length >= 3 && s2.Length >= 3)
+        {
+            if (s1.Contains(s2, StringComparison.OrdinalIgnoreCase) || s2.Contains(s1, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        // 3. Word token matching excluding common stop words
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "the", "for", "and", "with", "from", "into", "that", "this", "some", "item", "paid", "bill", "payment"
+        };
+
+        var words1 = s1.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                       .Where(w => w.Length >= 3 && !stopWords.Contains(w))
+                       .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var words2 = s2.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                       .Where(w => w.Length >= 3 && !stopWords.Contains(w))
+                       .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (words1.Count > 0 && words2.Count > 0)
+        {
+            var commonWords = words1.Intersect(words2).ToList();
+            if (commonWords.Count > 0)
+            {
+                int minWords = Math.Min(words1.Count, words2.Count);
+                if (commonWords.Count == minWords)
+                    return true;
+
+                int unionCount = words1.Union(words2).Count();
+                if ((double)commonWords.Count / unionCount >= 0.33)
+                    return true;
+
+                // Shared distinctive brand / vendor word with length >= 4
+                if (commonWords.Any(w => w.Length >= 4))
+                    return true;
+            }
+        }
+
+        // 4. Levenshtein edit distance & similarity ratio
+        int maxLen = Math.Max(s1.Length, s2.Length);
+        if (maxLen > 0)
+        {
+            int dist = ComputeLevenshteinDistance(s1, s2);
+            if ((maxLen >= 4 && dist <= 2) || (1.0 - (double)dist / maxLen) >= 0.70)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Computes classic Levenshtein distance between two strings.
+    /// </summary>
+    public static int ComputeLevenshteinDistance(string s, string t)
+    {
+        int n = s.Length;
+        int m = t.Length;
+        var d = new int[n + 1, m + 1];
+
+        if (n == 0) return m;
+        if (m == 0) return n;
+
+        for (int i = 0; i <= n; d[i, 0] = i++) { }
+        for (int j = 0; j <= m; d[0, j] = j++) { }
+
+        for (int i = 1; i <= n; i++)
+        {
+            for (int j = 1; j <= m; j++)
+            {
+                int cost = (t[j - 1] == s[i - 1]) ? 0 : 1;
+                d[i, j] = Math.Min(
+                    Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
+                    d[i - 1, j - 1] + cost);
+            }
+        }
+        return d[n, m];
+    }
+
     public async Task<Expense> CreateExpenseAsync(Expense expense, Guid? memberGlobalId = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -1119,6 +1284,13 @@ public class ExpenseService
 
         if (pending is null) return null;
 
+        string? note = null;
+        if (!string.IsNullOrEmpty(pending.RawSmsBody) && pending.RawSmsBody.Contains("Note:"))
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(pending.RawSmsBody, @"Note:\s*([^|\r\n]+)");
+            if (match.Success) note = match.Groups[1].Value.Trim();
+        }
+
         var expense = new Expense
         {
             GlobalId = Guid.NewGuid(),
@@ -1127,6 +1299,8 @@ public class ExpenseService
             TransactionDate = transactionDate,
             CategoryGlobalId = categoryGlobalId,
             MemberGlobalId = memberGlobalId,
+            Account = pending.DetectedAccount,
+            Note = note,
             DeviceId = "web",
             CreatedAt = DateTime.UtcNow,
             ModifiedAt = DateTime.UtcNow
@@ -1139,6 +1313,17 @@ public class ExpenseService
             expense.CategoryId = cat?.Id;
         }
 
+        if (!string.IsNullOrWhiteSpace(expense.Account))
+        {
+            var acc = await db.BankAccounts
+                .FirstOrDefaultAsync(a => !a.IsDeleted && (a.AccountName == expense.Account || (a.AccountNumberSuffix != null && expense.Account.Contains(a.AccountNumberSuffix))));
+            if (acc != null)
+            {
+                expense.AccountGlobalId = acc.GlobalId;
+                expense.BankAccountId = acc.Id;
+            }
+        }
+
         db.Expenses.Add(expense);
 
         pending.Status = PendingTransactionStatus.Approved;
@@ -1148,6 +1333,132 @@ public class ExpenseService
 
         await db.SaveChangesAsync();
         return expense;
+    }
+
+    public async Task<int> ApprovePendingTransactionsBatchAsync(List<Guid> pendingIds, Guid? memberGlobalId = null)
+    {
+        if (pendingIds.Count == 0) return 0;
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var pendingList = await db.PendingTransactions
+            .Where(p => pendingIds.Contains(p.GlobalId) && !p.IsDeleted && p.Status == PendingTransactionStatus.Pending)
+            .ToListAsync();
+
+        if (pendingList.Count == 0) return 0;
+
+        var categories = await db.Categories.Where(c => !c.IsDeleted).ToListAsync();
+        var bankAccounts = await db.BankAccounts.Where(a => !a.IsDeleted).ToListAsync();
+        var defaultCategory = categories.FirstOrDefault();
+
+        int approvedCount = 0;
+        foreach (var pending in pendingList)
+        {
+            var amount = pending.DetectedAmount ?? 0m;
+            var desc = !string.IsNullOrWhiteSpace(pending.DetectedMerchant) ? pending.DetectedMerchant : "Expense";
+            var date = pending.DetectedDate ?? pending.CreatedAt;
+
+            Category? matchedCategory = null;
+            if (!string.IsNullOrEmpty(pending.RawSmsBody) && pending.RawSmsBody.Contains("Category:"))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(pending.RawSmsBody, @"Category:\s*([^|\r\n]+)");
+                if (match.Success)
+                {
+                    var catName = match.Groups[1].Value.Trim();
+                    matchedCategory = categories.FirstOrDefault(c => string.Equals(c.Name, catName, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+
+            if (matchedCategory == null)
+            {
+                matchedCategory = MatchCategoryByKeyword(categories, desc) ?? defaultCategory;
+            }
+
+            string? note = null;
+            if (!string.IsNullOrEmpty(pending.RawSmsBody) && pending.RawSmsBody.Contains("Note:"))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(pending.RawSmsBody, @"Note:\s*([^|\r\n]+)");
+                if (match.Success) note = match.Groups[1].Value.Trim();
+            }
+
+            var expense = new Expense
+            {
+                GlobalId = Guid.NewGuid(),
+                Amount = amount,
+                Description = desc,
+                TransactionDate = date,
+                CategoryId = matchedCategory?.Id,
+                CategoryGlobalId = matchedCategory?.GlobalId,
+                Account = pending.DetectedAccount,
+                Note = note,
+                MemberGlobalId = memberGlobalId,
+                DeviceId = "web-bulk-approve",
+                CreatedAt = DateTime.UtcNow,
+                ModifiedAt = DateTime.UtcNow
+            };
+
+            if (!string.IsNullOrWhiteSpace(expense.Account))
+            {
+                var acc = bankAccounts.FirstOrDefault(a => a.AccountName == expense.Account || (a.AccountNumberSuffix != null && expense.Account.Contains(a.AccountNumberSuffix)));
+                if (acc != null)
+                {
+                    expense.AccountGlobalId = acc.GlobalId;
+                    expense.BankAccountId = acc.Id;
+                }
+            }
+
+            db.Expenses.Add(expense);
+
+            pending.Status = PendingTransactionStatus.Approved;
+            pending.ApprovedAsExpenseGlobalId = expense.GlobalId;
+            pending.ModifiedAt = DateTime.UtcNow;
+            approvedCount++;
+        }
+
+        await db.SaveChangesAsync();
+        return approvedCount;
+    }
+
+    public static Category? MatchCategoryByKeyword(List<Category> categories, string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || categories.Count == 0) return null;
+        var lower = text.ToLowerInvariant();
+
+        foreach (var cat in categories)
+        {
+            var catLower = cat.Name.ToLowerInvariant();
+            if (lower.Contains(catLower) || catLower.Contains(lower))
+                return cat;
+        }
+
+        if (lower.Contains("swiggy") || lower.Contains("zomato") || lower.Contains("restaurant") || lower.Contains("cafe") || lower.Contains("food") || lower.Contains("grocery") || lower.Contains("groceries"))
+            return categories.FirstOrDefault(c => c.Name.Contains("Food", StringComparison.OrdinalIgnoreCase) || c.Name.Contains("Grocer", StringComparison.OrdinalIgnoreCase));
+        if (lower.Contains("amazon") || lower.Contains("flipkart") || lower.Contains("myntra") || lower.Contains("shopping"))
+            return categories.FirstOrDefault(c => c.Name.Contains("Shopping", StringComparison.OrdinalIgnoreCase));
+        if (lower.Contains("uber") || lower.Contains("ola") || lower.Contains("petrol") || lower.Contains("fuel"))
+            return categories.FirstOrDefault(c => c.Name.Contains("Transport", StringComparison.OrdinalIgnoreCase) || c.Name.Contains("Fuel", StringComparison.OrdinalIgnoreCase));
+        if (lower.Contains("bescom") || lower.Contains("electricity") || lower.Contains("bill") || lower.Contains("wifi") || lower.Contains("broadband"))
+            return categories.FirstOrDefault(c => c.Name.Contains("Utilities", StringComparison.OrdinalIgnoreCase) || c.Name.Contains("Bill", StringComparison.OrdinalIgnoreCase));
+
+        return null;
+    }
+
+    public async Task<int> RejectPendingTransactionsBatchAsync(List<Guid> pendingIds)
+    {
+        if (pendingIds.Count == 0) return 0;
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var pendingList = await db.PendingTransactions
+            .Where(p => pendingIds.Contains(p.GlobalId) && !p.IsDeleted && p.Status == PendingTransactionStatus.Pending)
+            .ToListAsync();
+
+        foreach (var pending in pendingList)
+        {
+            pending.Status = PendingTransactionStatus.Rejected;
+            pending.ModifiedAt = DateTime.UtcNow;
+        }
+
+        await db.SaveChangesAsync();
+        return pendingList.Count;
     }
 
     public async Task<bool> RejectPendingTransactionAsync(Guid pendingId)
@@ -1325,6 +1636,90 @@ public class ExpenseService
         }
 
         return new ImportResult(inserted, updated, skipped, errors);
+    }
+
+    /// <summary>
+    /// Imports parsed Excel expense items into PendingTransactions for user verification and approval.
+    /// </summary>
+    public async Task<ImportResult> ImportExpensesToPendingAsync(List<ImportExpenseItem> items, Guid? memberGlobalId = null)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var errors = new List<string>();
+        int inserted = 0;
+        int skipped = 0;
+
+        var existingCategories = await db.Categories.ToListAsync();
+
+        foreach (var item in items)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(item.CategoryName))
+                {
+                    var catTrim = item.CategoryName.Trim();
+                    var matchedCategory = existingCategories.FirstOrDefault(c =>
+                        string.Equals(c.Name, catTrim, StringComparison.OrdinalIgnoreCase) && !c.IsDeleted);
+
+                    if (matchedCategory is null)
+                    {
+                        matchedCategory = new Category
+                        {
+                            GlobalId = Guid.NewGuid(),
+                            Name = catTrim,
+                            Icon = "📁",
+                            Colour = "#6366f1",
+                            DeviceId = "import",
+                            CreatedAt = DateTime.UtcNow,
+                            ModifiedAt = DateTime.UtcNow
+                        };
+                        db.Categories.Add(matchedCategory);
+                        await db.SaveChangesAsync();
+                        existingCategories.Add(matchedCategory);
+                    }
+                }
+
+                var normalizedAmount = Math.Abs(item.Amount);
+                var title = string.IsNullOrWhiteSpace(item.Title) ? "Untitled Expense" : item.Title.Trim();
+
+                var rawBodyParts = new List<string> { "[Excel Import]" };
+                if (!string.IsNullOrWhiteSpace(item.CategoryName)) rawBodyParts.Add($"Category: {item.CategoryName.Trim()}");
+                if (!string.IsNullOrWhiteSpace(item.Note)) rawBodyParts.Add($"Note: {item.Note.Trim()}");
+                if (!string.IsNullOrWhiteSpace(item.Tags)) rawBodyParts.Add($"Tags: {item.Tags.Trim()}");
+                if (!string.IsNullOrWhiteSpace(item.Subcategory)) rawBodyParts.Add($"Subcategory: {item.Subcategory.Trim()}");
+
+                var pending = new PendingTransaction
+                {
+                    GlobalId = item.GlobalId ?? Guid.NewGuid(),
+                    DetectedAmount = normalizedAmount,
+                    DetectedMerchant = title,
+                    DetectedDate = item.Date,
+                    DetectedAccount = item.Account,
+                    DetectedBank = item.Account,
+                    DetectedType = item.Amount < 0 ? TransactionType.Debit : TransactionType.Credit,
+                    Status = PendingTransactionStatus.Pending,
+                    RawSmsBody = string.Join(" | ", rawBodyParts),
+                    DeviceId = "excel-import",
+                    CreatedAt = DateTime.UtcNow,
+                    ModifiedAt = DateTime.UtcNow
+                };
+
+                db.PendingTransactions.Add(pending);
+                inserted++;
+            }
+            catch (Exception ex)
+            {
+                var innermost = ex;
+                while (innermost.InnerException is not null)
+                {
+                    innermost = innermost.InnerException;
+                }
+                errors.Add($"Row '{item.Title}': {innermost.Message}");
+                skipped++;
+            }
+        }
+
+        await db.SaveChangesAsync();
+        return new ImportResult(inserted, 0, skipped, errors);
     }
 
     // ── Family Members & Profiles ──────────────────────────────────────────

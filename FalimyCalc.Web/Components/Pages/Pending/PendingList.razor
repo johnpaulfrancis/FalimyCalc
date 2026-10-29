@@ -13,9 +13,12 @@
 <div class="dash-header mb-4">
     <div>
         <h1 class="dash-title">Pending Transactions</h1>
-        <p class="dash-subtitle">Review, edit, and approve detected transactions before they become confirmed expenses</p>
+        <p class="dash-subtitle">Review, edit, and approve detected and imported transactions before they become confirmed expenses</p>
     </div>
     <div class="d-flex gap-2">
+        <a href="/expenses" class="btn btn-outline-secondary d-flex align-items-center gap-1 shadow-sm">
+            <span>←</span> <span>Expenses</span>
+        </a>
         <button class="btn-primary-glow border-0" @onclick="ShowSimulateModal">
             <span class="btn-icon">⚡</span> Simulate SMS
         </button>
@@ -81,12 +84,70 @@ else if (!FilteredItems.Any())
 }
 else
 {
+    <!-- Bulk Action Toolbar -->
+    @if (PendingItemsInView.Any())
+    {
+        <div class="card p-3 border-0 shadow-sm d-flex flex-row align-items-center justify-content-between flex-wrap gap-2 mb-3"
+             style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important; border-radius: 12px;">
+            <div class="d-flex align-items-center gap-2">
+                <input type="checkbox"
+                       class="form-check-input"
+                       id="selectAllPending"
+                       style="width: 1.25rem; height: 1.25rem; cursor: pointer;"
+                       checked="@IsAllSelected"
+                       @onchange="ToggleSelectAll" />
+                <label for="selectAllPending" class="form-check-label small fw-bold mb-0" style="cursor: pointer;">
+                    Select All Pending (@PendingItemsInView.Count())
+                </label>
+            </div>
+
+            @if (SelectedPendingIds.Count > 0)
+            {
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="badge bg-primary px-2 py-1 small">
+                        @SelectedPendingIds.Count selected
+                    </span>
+                    <span class="small fw-bold text-muted me-2">
+                        Total: ₹ @GetSelectedTotal().ToString("N2")
+                    </span>
+                    <button class="btn btn-sm btn-success fw-semibold px-3 d-flex align-items-center gap-1"
+                            @onclick="ApproveSelectedAsync"
+                            disabled="@IsProcessing">
+                        @if (IsProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        <span>✓ Approve Selected (@SelectedPendingIds.Count)</span>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger fw-semibold"
+                            @onclick="RejectSelectedAsync"
+                            disabled="@IsProcessing">
+                        ✕ Reject Selected
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary"
+                            @onclick="ClearSelection"
+                            disabled="@IsProcessing">
+                        Clear
+                    </button>
+                </div>
+            }
+            else
+            {
+                <span class="small text-muted">
+                    Check the boxes beside transactions to verify and approve multiple in batch.
+                </span>
+            }
+        </div>
+    }
+
     <div class="d-flex flex-column gap-3">
         @foreach (var item in FilteredItems)
         {
             var isPending = item.Status == PendingTransactionStatus.Pending;
             var isApproved = item.Status == PendingTransactionStatus.Approved;
             var isRejected = item.Status == PendingTransactionStatus.Rejected;
+            var isExcelImport = !string.IsNullOrEmpty(item.RawSmsBody) && item.RawSmsBody.StartsWith("[Excel Import]");
+            var parsedCatName = ExtractCategoryName(item.RawSmsBody);
 
             <div class="card shadow-sm border-0 position-relative" style="overflow: hidden; border-radius: 14px;">
                 <!-- Status accent line -->
@@ -96,14 +157,37 @@ else
                     <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
                         <!-- Left Details -->
                         <div class="d-flex align-items-start gap-3">
+                            @if (isPending)
+                            {
+                                <div class="form-check pt-2">
+                                    <input type="checkbox"
+                                           class="form-check-input"
+                                           id="chk-@item.GlobalId"
+                                           style="width: 1.35rem; height: 1.35rem; cursor: pointer;"
+                                           checked="@SelectedPendingIds.Contains(item.GlobalId)"
+                                           @onchange="(e) => ToggleSelect(item.GlobalId, e.Value)" />
+                                </div>
+                            }
                             <div class="rounded-circle d-grid place-items-center text-center p-2"
                                  style="width: 44px; height: 44px; background: @(isPending ? "rgba(245, 158, 11, 0.15)" : isApproved ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)");">
-                                <span class="fs-5">@(isPending ? "⏳" : isApproved ? "✅" : "❌")</span>
+                                <span class="fs-5">@(isPending ? (isExcelImport ? "📊" : "⏳") : isApproved ? "✅" : "❌")</span>
                             </div>
 
                             <div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
                                     <h6 class="mb-0 fw-bold">@(item.DetectedMerchant ?? "Unknown Merchant")</h6>
+                                    @if (isExcelImport)
+                                    {
+                                        <span class="badge bg-primary-subtle text-primary small">
+                                            📊 Excel Import
+                                        </span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(parsedCatName))
+                                    {
+                                        <span class="badge bg-secondary-subtle text-secondary small">
+                                            📁 @parsedCatName
+                                        </span>
+                                    }
                                     @if (!string.IsNullOrEmpty(item.DetectedBank))
                                     {
                                         <span class="badge bg-secondary-subtle text-secondary small">
@@ -123,11 +207,13 @@ else
                                     }
                                 </div>
 
-                                <!-- Collapsible / Expandable SMS Preview -->
+                                <!-- Collapsible / Expandable Details Preview -->
                                 @if (!string.IsNullOrEmpty(item.RawSmsBody))
                                 {
                                     <div class="mt-2 p-2 rounded small" style="background: var(--dash-surface-raised); border: 1px dashed var(--dash-border); max-width: 600px;">
-                                        <span class="text-muted d-block" style="font-size: 0.75rem;">SMS Content:</span>
+                                        <span class="text-muted d-block" style="font-size: 0.75rem;">
+                                            @(isExcelImport ? "Import Details:" : "SMS Content:")
+                                        </span>
                                         <span class="font-monospace" style="font-size: 0.8rem;">@item.RawSmsBody</span>
                                     </div>
                                 }
@@ -193,13 +279,17 @@ else
                     </div>
 
                     <div class="row g-2 mb-3">
-                        <div class="col-6">
+                        <div class="col-4">
                             <label class="form-label small fw-semibold">Amount (₹) <span class="text-danger">*</span></label>
                             <input type="number" step="0.01" class="form-control" @bind="ApproveAmount" />
                         </div>
-                        <div class="col-6">
+                        <div class="col-4">
                             <label class="form-label small fw-semibold">Date</label>
-                            <input type="date" class="form-control" @bind="ApproveDate" />
+                            <input type="date" class="form-control" @bind="ApproveDateOnly" />
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small fw-semibold">Time</label>
+                            <input type="time" class="form-control" @bind="ApproveTimeOnly" />
                         </div>
                     </div>
 
@@ -342,6 +432,117 @@ else
     private void SetFilter(PendingTransactionStatus? status)
     {
         ActiveFilter = status;
+        SelectedPendingIds.Clear();
+    }
+
+    private HashSet<Guid> SelectedPendingIds = [];
+
+    private IEnumerable<PendingTransaction> PendingItemsInView =>
+        FilteredItems.Where(x => x.Status == PendingTransactionStatus.Pending);
+
+    private bool IsAllSelected =>
+        PendingItemsInView.Any() && PendingItemsInView.All(x => SelectedPendingIds.Contains(x.GlobalId));
+
+    private void ToggleSelect(Guid id, object? checkedValue)
+    {
+        bool isChecked = checkedValue is bool b && b;
+        if (isChecked)
+            SelectedPendingIds.Add(id);
+        else
+            SelectedPendingIds.Remove(id);
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        bool isChecked = e.Value is bool b && b;
+        if (isChecked)
+        {
+            foreach (var item in PendingItemsInView)
+            {
+                SelectedPendingIds.Add(item.GlobalId);
+            }
+        }
+        else
+        {
+            SelectedPendingIds.Clear();
+        }
+    }
+
+    private decimal GetSelectedTotal()
+    {
+        return AllItems.Where(x => SelectedPendingIds.Contains(x.GlobalId))
+                       .Sum(x => x.DetectedAmount ?? 0m);
+    }
+
+    private void ClearSelection()
+    {
+        SelectedPendingIds.Clear();
+    }
+
+    private static string? ExtractCategoryName(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(raw, @"Category:\s*([^|\r\n]+)");
+        return match.Success ? match.Groups[1].Value.Trim() : null;
+    }
+
+    private async Task ApproveSelectedAsync()
+    {
+        if (SelectedPendingIds.Count == 0) return;
+
+        IsProcessing = true;
+        try
+        {
+            var count = await ExpenseService.ApprovePendingTransactionsBatchAsync(
+                SelectedPendingIds.ToList(),
+                Session.CurrentUser?.GlobalId);
+
+            SuccessMessage = $"Successfully approved and added {count} transaction(s) to Expenses!";
+            SelectedPendingIds.Clear();
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            SuccessMessage = $"Failed to approve selected: {ex.Message}";
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task RejectSelectedAsync()
+    {
+        if (SelectedPendingIds.Count == 0) return;
+
+        IsProcessing = true;
+        try
+        {
+            var count = await ExpenseService.RejectPendingTransactionsBatchAsync(SelectedPendingIds.ToList());
+            SuccessMessage = $"Rejected {count} pending transaction(s).";
+            SelectedPendingIds.Clear();
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            SuccessMessage = $"Failed to reject selected: {ex.Message}";
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private DateOnly ApproveDateOnly
+    {
+        get => DateOnly.FromDateTime(ApproveDate);
+        set => ApproveDate = new DateTime(value.Year, value.Month, value.Day, ApproveDate.Hour, ApproveDate.Minute, ApproveDate.Second);
+    }
+
+    private TimeOnly ApproveTimeOnly
+    {
+        get => TimeOnly.FromDateTime(ApproveDate);
+        set => ApproveDate = new DateTime(ApproveDate.Year, ApproveDate.Month, ApproveDate.Day, value.Hour, value.Minute, 0);
     }
 
     private void StartApprove(PendingTransaction item)
@@ -349,9 +550,21 @@ else
         ApprovingItem = item;
         ApproveDescription = item.DetectedMerchant ?? "Expense";
         ApproveAmount = item.DetectedAmount ?? 0;
-        ApproveDate = item.DetectedDate?.Date ?? DateTime.Today;
+        ApproveDate = item.DetectedDate ?? DateTime.Now;
 
-        // Auto-match category by keyword
+        // Auto-match category by Excel metadata or keyword
+        var catName = ExtractCategoryName(item.RawSmsBody);
+        if (!string.IsNullOrEmpty(catName))
+        {
+            var match = Categories.FirstOrDefault(c => string.Equals(c.Name, catName, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                ApproveCategoryId = match.GlobalId;
+                ApproveError = null;
+                return;
+            }
+        }
+
         ApproveCategoryId = AutoMatchCategory(ApproveDescription);
         ApproveError = null;
     }

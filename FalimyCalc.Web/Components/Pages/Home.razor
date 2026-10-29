@@ -925,7 +925,7 @@ else
                             <div class="tx-details">
                                 <span class="tx-name">@exp.Description</span>
                                 <span class="tx-meta">
-                                    @exp.TransactionDate.ToString("dd MMM")
+                                    @exp.TransactionDate.ToString("dd MMM")@(exp.TransactionDate.TimeOfDay != TimeSpan.Zero ? $" • {exp.TransactionDate:hh:mm tt}" : "")
                                     @if (ExpenseService.IsTransferTransaction(exp))
                                     {
                                         <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.7rem;">

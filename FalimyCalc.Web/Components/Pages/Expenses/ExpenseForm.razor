@@ -239,22 +239,31 @@
                             </div>
                         </div>
 
-                        <!-- 5. Date & 6. Purpose -->
+                        <!-- 5. Date & Time & 6. Purpose -->
                         <div class="row g-3 mb-4">
-                            <div class="col-md-4">
+                            <div class="col-md-5">
                                 <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
-                                    5. Transfer Date <span class="text-danger">*</span>
+                                    5. Transfer Date & Time <span class="text-danger">*</span>
                                 </label>
-                                <input type="date" class="form-control mb-1" @bind="TransferDate" />
-                                <div class="d-flex gap-1">
+                                <div class="row g-2 mb-1">
+                                    <div class="col-7">
+                                        <input type="date" class="form-control" @bind="TransferDateOnly" />
+                                    </div>
+                                    <div class="col-5">
+                                        <input type="time" class="form-control" @bind="TransferTimeOnly" />
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-1 flex-wrap">
                                     <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(TransferDate.Date == DateTime.Today ? "active" : "")"
-                                            @onclick="() => TransferDate = DateTime.Today">Today</button>
+                                            @onclick="() => SetTransferDate(DateTime.Today)">Today</button>
                                     <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(TransferDate.Date == DateTime.Today.AddDays(-1) ? "active" : "")"
-                                            @onclick="() => TransferDate = DateTime.Today.AddDays(-1)">Yesterday</button>
+                                            @onclick="() => SetTransferDate(DateTime.Today.AddDays(-1))">Yesterday</button>
+                                    <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 quick-chip"
+                                            @onclick="SetTransferTimeToNow">⏱️ Now</button>
                                 </div>
                             </div>
 
-                            <div class="col-md-8">
+                            <div class="col-md-7">
                                 <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
                                     6. Purpose / Description
                                 </label>
@@ -544,39 +553,79 @@
                                 </div>
                             </div>
 
-                            <!-- 5. Date & 6. Bank Account Selector -->
+                            <!-- 5. Date & Time & 6. Bank Account Selector -->
                             <div class="row g-3 mb-4">
-                                <!-- Date -->
-                                <div class="col-md-4">
+                                <!-- Date & Time -->
+                                <div class="col-md-5">
                                     <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
-                                        5. Date <span class="text-danger">*</span>
+                                        5. Date & Time <span class="text-danger">*</span>
                                     </label>
-                                    <input type="date" class="form-control mb-1" @bind="Model.TransactionDate" />
+                                    <div class="row g-2 mb-1">
+                                        <div class="col-7">
+                                            <input type="date" class="form-control" @bind="TransactionDateOnly" />
+                                        </div>
+                                        <div class="col-5">
+                                            <input type="time" class="form-control" @bind="TransactionTimeOnly" />
+                                        </div>
+                                    </div>
                                     <!-- Quick Date Chips -->
-                                    <div class="d-flex gap-1 flex-wrap">
+                                    <div class="d-flex gap-1 flex-wrap mb-1">
                                         <button type="button"
                                                 class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(Model.TransactionDate.Date == DateTime.Today ? "active" : "")"
-                                                @onclick="() => Model.TransactionDate = DateTime.Today">
+                                                @onclick="() => SetTransactionDate(DateTime.Today)">
                                             Today
                                         </button>
                                         <button type="button"
                                                 class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(Model.TransactionDate.Date == DateTime.Today.AddDays(-1) ? "active" : "")"
-                                                @onclick="() => Model.TransactionDate = DateTime.Today.AddDays(-1)">
+                                                @onclick="() => SetTransactionDate(DateTime.Today.AddDays(-1))">
                                             Yesterday
                                         </button>
                                         <button type="button"
                                                 class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(Model.TransactionDate.Date == DateTime.Today.AddDays(-2) ? "active" : "")"
-                                                @onclick="() => Model.TransactionDate = DateTime.Today.AddDays(-2)">
+                                                @onclick="() => SetTransactionDate(DateTime.Today.AddDays(-2))">
                                             2 Days Ago
+                                        </button>
+                                    </div>
+                                    <!-- Quick Time Presets -->
+                                    <div class="d-flex gap-1 flex-wrap align-items-center" style="font-size: 0.72rem;">
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-primary py-0 px-2 quick-chip"
+                                                @onclick="SetTransactionTimeToNow"
+                                                title="Set to current time">
+                                            ⏱️ Now
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-1 quick-chip"
+                                                @onclick="() => SetTransactionTime(9, 0)"
+                                                title="Morning 09:00 AM">
+                                            ☀️ 9 AM
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-1 quick-chip"
+                                                @onclick="() => SetTransactionTime(13, 30)"
+                                                title="Afternoon 01:30 PM">
+                                            🌤️ 1:30 PM
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-1 quick-chip"
+                                                @onclick="() => SetTransactionTime(17, 30)"
+                                                title="Evening 05:30 PM">
+                                            ☕ 5:30 PM
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary py-0 px-1 quick-chip"
+                                                @onclick="() => SetTransactionTime(21, 0)"
+                                                title="Night 09:00 PM">
+                                            🌙 9 PM
                                         </button>
                                     </div>
                                 </div>
 
                                 <!-- Bank Account Selector -->
-                                <div class="col-md-8">
+                                <div class="col-md-7">
                                     <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
                                         <label class="form-label fw-semibold small text-muted text-uppercase mb-0 text-nowrap">
-                                            6. @(SelectedType == "income" ? "Deposited Into Bank Account" : "Paid From Bank Account") <span class="text-danger">*</span>
+                                            6. @(SelectedType == "income" ? "Deposited Into" : "Paid From") <span class="text-danger">*</span>
                                         </label>
                                         <div class="d-flex align-items-center gap-2 text-nowrap ms-auto" style="font-size: 0.8rem;">
                                             <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-muted"
@@ -769,8 +818,8 @@
                                 </div>
 
                                 <div class="d-flex justify-content-between py-2 border-bottom" style="border-color: var(--dash-border) !important;">
-                                    <span class="text-muted">Date</span>
-                                    <span style="color: var(--dash-text);">@Model.TransactionDate.ToString("ddd, dd MMM yyyy")</span>
+                                    <span class="text-muted">Date & Time</span>
+                                    <span style="color: var(--dash-text); font-weight: 500;">@Model.TransactionDate.ToString("ddd, dd MMM yyyy, hh:mm tt")</span>
                                 </div>
 
                                 <div class="d-flex justify-content-between py-2 border-bottom align-items-center" style="border-color: var(--dash-border) !important;">
@@ -839,6 +888,67 @@
         </div>
     }
 </div>
+
+<!-- ── Duplicate Transaction Warning Modal ────────────────────────────── -->
+@if (ShowDuplicateWarningModal && DetectedDuplicateExpense != null)
+{
+    <div class="modal-backdrop-custom" @onclick="DismissDuplicateWarning">
+        <div class="modal-panel shadow-lg animate-in" style="max-width: 500px;" @onclick:stopPropagation="true">
+            <div class="modal-panel-header" style="border-bottom: 1px solid var(--dash-border); background: rgba(245, 158, 11, 0.08);">
+                <h5 class="mb-0 fw-bold d-flex align-items-center gap-2" style="color: var(--c-amber, #f59e0b);">
+                    <span>⚠️ Possible Duplicate Transaction</span>
+                </h5>
+                <button type="button" class="btn-close" @onclick="DismissDuplicateWarning"></button>
+            </div>
+            <div class="modal-panel-body">
+                <div class="alert alert-warning py-2 px-3 small mb-3 d-flex align-items-start gap-2" style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); color: inherit;">
+                    <span class="fs-5">ℹ️</span>
+                    <div>
+                        There may be an existing transaction with the description <strong>"@DetectedDuplicateExpense.Description"</strong> and the same amount in this date (<strong>@DetectedDuplicateExpense.TransactionDate.ToString("dd MMM yyyy")</strong>).
+                    </div>
+                </div>
+
+                <!-- Comparison Card -->
+                <div class="p-3 rounded-3 mb-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                    <div class="small fw-bold text-muted text-uppercase mb-2" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                        Existing Transaction Details:
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--dash-border) !important;">
+                        <span class="text-muted small">Description:</span>
+                        <strong class="small">@DetectedDuplicateExpense.Description</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--dash-border) !important;">
+                        <span class="text-muted small">Amount:</span>
+                        <strong class="text-danger small">₹ @DetectedDuplicateExpense.Amount.ToString("N2")</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--dash-border) !important;">
+                        <span class="text-muted small">Date:</span>
+                        <span class="small fw-semibold">@DetectedDuplicateExpense.TransactionDate.ToString("dd MMM yyyy")</span>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(DetectedDuplicateExpense.Account))
+                    {
+                        <div class="d-flex justify-content-between align-items-center py-1">
+                            <span class="text-muted small">Account:</span>
+                            <span class="small">@DetectedDuplicateExpense.Account</span>
+                        </div>
+                    }
+                </div>
+
+                <p class="mb-0 small text-center fw-semibold" style="color: var(--dash-text);">
+                    Do you want to add this transaction?
+                </p>
+            </div>
+            <div class="modal-panel-footer d-flex justify-content-end gap-2 p-3 border-top" style="border-color: var(--dash-border) !important;">
+                <button type="button" class="btn btn-outline-secondary btn-sm px-3" @onclick="DismissDuplicateWarning">
+                    Cancel & Review
+                </button>
+                <button type="button" class="btn btn-warning btn-sm px-3 fw-bold text-dark" @onclick="ConfirmDuplicateAndProceedAsync">
+                    Yes, Add Transaction
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 <style>
     .type-tab {
@@ -980,6 +1090,46 @@
         font-size: 0.75rem;
         font-weight: 600;
     }
+
+    .modal-panel {
+        background: var(--dash-surface, #ffffff);
+        color: var(--dash-text-main, #1e293b);
+        border: 1px solid var(--dash-border, #e2e8f0);
+        border-radius: 16px;
+        width: 100%;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.25), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        z-index: 1060;
+    }
+    .modal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.1rem 1.25rem;
+        border-bottom: 1px solid var(--dash-border, #e2e8f0);
+    }
+    .modal-panel-body {
+        padding: 1.25rem;
+        overflow-y: auto;
+    }
+    .modal-panel-footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        padding: 1rem 1.25rem;
+        border-top: 1px solid var(--dash-border, #e2e8f0);
+    }
+    .animate-in {
+        animation: scaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @@keyframes scaleIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+    }
 </style>
 
 @code {
@@ -997,6 +1147,10 @@
     private string SuccessMessage = "Transaction saved successfully!";
     private bool ShowExtraDetails = false;
     private string? ErrorMessage;
+
+    private bool ShowDuplicateWarningModal = false;
+    private Expense? DetectedDuplicateExpense;
+    private string DuplicateConfirmTarget = "submit";
 
     // Type mode: "expense" | "income" | "transfer"
     private string SelectedType = "expense";
@@ -1025,7 +1179,7 @@
         }
     }
     private decimal TransferAmount;
-    private DateTime TransferDate = DateTime.Today;
+    private DateTime TransferDate = DateTime.Now;
     private string TransferDescription = string.Empty;
     private string? TransferNote;
 
@@ -1098,12 +1252,63 @@
     {
         public decimal Amount { get; set; }
         public string Description { get; set; } = string.Empty;
-        public DateTime TransactionDate { get; set; } = DateTime.Today;
+        public DateTime TransactionDate { get; set; } = DateTime.Now;
         public Guid? AccountGlobalId { get; set; }
         public string? Account { get; set; }
         public string? Note { get; set; }
         public string? Subcategory { get; set; }
         public string? Tags { get; set; }
+    }
+
+    private DateOnly TransactionDateOnly
+    {
+        get => DateOnly.FromDateTime(Model.TransactionDate);
+        set => Model.TransactionDate = new DateTime(value.Year, value.Month, value.Day, Model.TransactionDate.Hour, Model.TransactionDate.Minute, Model.TransactionDate.Second);
+    }
+
+    private TimeOnly TransactionTimeOnly
+    {
+        get => TimeOnly.FromDateTime(Model.TransactionDate);
+        set => Model.TransactionDate = new DateTime(Model.TransactionDate.Year, Model.TransactionDate.Month, Model.TransactionDate.Day, value.Hour, value.Minute, 0);
+    }
+
+    private void SetTransactionTimeToNow()
+    {
+        var now = DateTime.Now;
+        Model.TransactionDate = new DateTime(Model.TransactionDate.Year, Model.TransactionDate.Month, Model.TransactionDate.Day, now.Hour, now.Minute, 0);
+    }
+
+    private void SetTransactionTime(int hour, int minute)
+    {
+        Model.TransactionDate = new DateTime(Model.TransactionDate.Year, Model.TransactionDate.Month, Model.TransactionDate.Day, hour, minute, 0);
+    }
+
+    private void SetTransactionDate(DateTime date)
+    {
+        Model.TransactionDate = new DateTime(date.Year, date.Month, date.Day, Model.TransactionDate.Hour, Model.TransactionDate.Minute, Model.TransactionDate.Second);
+    }
+
+    private DateOnly TransferDateOnly
+    {
+        get => DateOnly.FromDateTime(TransferDate);
+        set => TransferDate = new DateTime(value.Year, value.Month, value.Day, TransferDate.Hour, TransferDate.Minute, TransferDate.Second);
+    }
+
+    private TimeOnly TransferTimeOnly
+    {
+        get => TimeOnly.FromDateTime(TransferDate);
+        set => TransferDate = new DateTime(TransferDate.Year, TransferDate.Month, TransferDate.Day, value.Hour, value.Minute, 0);
+    }
+
+    private void SetTransferTimeToNow()
+    {
+        var now = DateTime.Now;
+        TransferDate = new DateTime(TransferDate.Year, TransferDate.Month, TransferDate.Day, now.Hour, now.Minute, 0);
+    }
+
+    private void SetTransferDate(DateTime date)
+    {
+        TransferDate = new DateTime(date.Year, date.Month, date.Day, TransferDate.Hour, TransferDate.Minute, TransferDate.Second);
     }
 
     protected override async Task OnInitializedAsync()
@@ -1384,6 +1589,30 @@
             return;
         }
 
+        // Duplicate check for transfer
+        Guid? memberId = Session.CurrentUser?.Role == "Admin"
+            ? (Guid.TryParse(SelectedMemberId, out var m) ? m : Session.CurrentUser?.GlobalId)
+            : Session.CurrentUser?.GlobalId;
+
+        var duplicates = await ExpenseService.FindPotentialDuplicateExpensesAsync(
+            TransferAmount,
+            TransferDate,
+            TransferDescription,
+            memberId);
+
+        if (duplicates.Count > 0)
+        {
+            DetectedDuplicateExpense = duplicates.First();
+            DuplicateConfirmTarget = "transfer";
+            ShowDuplicateWarningModal = true;
+            return;
+        }
+
+        await ExecuteTransferCoreAsync();
+    }
+
+    private async Task ExecuteTransferCoreAsync()
+    {
         IsSaving = true;
 
         try
@@ -1394,8 +1623,8 @@
 
             await ExpenseService.CreateTransferAsync(new ExpenseService.TransferRequest(
                 TransferAmount,
-                TransferSourceAccountId.Value,
-                TransferDestAccountId.Value,
+                TransferSourceAccountId!.Value,
+                TransferDestAccountId!.Value,
                 TransferDate,
                 TransferDescription,
                 TransferNote,
@@ -1523,6 +1752,44 @@
 
     private async Task HandleSubmit()
     {
+        ErrorMessage = null;
+
+        if (Model.Amount <= 0)
+        {
+            ErrorMessage = "Please enter an amount greater than zero.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(Model.Description))
+        {
+            ErrorMessage = "Please enter a description for this transaction.";
+            return;
+        }
+
+        Guid? memberId = Session.CurrentUser?.Role == "Admin"
+            ? (Guid.TryParse(SelectedMemberId, out var m) ? m : Session.CurrentUser?.GlobalId)
+            : Session.CurrentUser?.GlobalId;
+
+        var duplicates = await ExpenseService.FindPotentialDuplicateExpensesAsync(
+            Model.Amount,
+            Model.TransactionDate,
+            Model.Description.Trim(),
+            memberId,
+            IsEditMode ? GlobalId : null);
+
+        if (duplicates.Count > 0)
+        {
+            DetectedDuplicateExpense = duplicates.First();
+            DuplicateConfirmTarget = "submit";
+            ShowDuplicateWarningModal = true;
+            return;
+        }
+
+        await ExecuteSaveAndNavigateAsync();
+    }
+
+    private async Task ExecuteSaveAndNavigateAsync()
+    {
         var ok = await SaveExpenseCoreAsync();
         if (ok)
         {
@@ -1531,6 +1798,44 @@
     }
 
     private async Task HandleSubmitAndAddAnother()
+    {
+        ErrorMessage = null;
+
+        if (Model.Amount <= 0)
+        {
+            ErrorMessage = "Please enter an amount greater than zero.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(Model.Description))
+        {
+            ErrorMessage = "Please enter a description for this transaction.";
+            return;
+        }
+
+        Guid? memberId = Session.CurrentUser?.Role == "Admin"
+            ? (Guid.TryParse(SelectedMemberId, out var m) ? m : Session.CurrentUser?.GlobalId)
+            : Session.CurrentUser?.GlobalId;
+
+        var duplicates = await ExpenseService.FindPotentialDuplicateExpensesAsync(
+            Model.Amount,
+            Model.TransactionDate,
+            Model.Description.Trim(),
+            memberId,
+            IsEditMode ? GlobalId : null);
+
+        if (duplicates.Count > 0)
+        {
+            DetectedDuplicateExpense = duplicates.First();
+            DuplicateConfirmTarget = "submit_another";
+            ShowDuplicateWarningModal = true;
+            return;
+        }
+
+        await ExecuteSaveAndAddAnotherAsync();
+    }
+
+    private async Task ExecuteSaveAndAddAnotherAsync()
     {
         var ok = await SaveExpenseCoreAsync();
         if (ok)
@@ -1542,7 +1847,7 @@
             Model.Note = null;
             Model.Subcategory = null;
             Model.Tags = null;
-            Model.TransactionDate = DateTime.Today;
+            Model.TransactionDate = DateTime.Now;
 
             var statuses = await ExpenseService.GetCategoryBudgetStatusesAsync(DateTime.Today.Year, DateTime.Today.Month);
             BudgetStatuses = statuses.ToDictionary(s => s.CategoryId);
@@ -1551,5 +1856,31 @@
             SuccessAlert = false;
             StateHasChanged();
         }
+    }
+
+    private async Task ConfirmDuplicateAndProceedAsync()
+    {
+        ShowDuplicateWarningModal = false;
+        var target = DuplicateConfirmTarget;
+        DetectedDuplicateExpense = null;
+
+        if (target == "submit")
+        {
+            await ExecuteSaveAndNavigateAsync();
+        }
+        else if (target == "submit_another")
+        {
+            await ExecuteSaveAndAddAnotherAsync();
+        }
+        else if (target == "transfer")
+        {
+            await ExecuteTransferCoreAsync();
+        }
+    }
+
+    private void DismissDuplicateWarning()
+    {
+        ShowDuplicateWarningModal = false;
+        DetectedDuplicateExpense = null;
     }
 }

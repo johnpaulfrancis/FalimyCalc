@@ -337,14 +337,20 @@
                     @foreach (var expense in Expenses)
                     {
                         <tr class="expense-row" @onclick="() => ViewExpenseDetails(expense)">
-                            <!-- Date -->
+                            <!-- Date & Time -->
                             <td>
                                 <div class="fw-semibold text-nowrap" style="color: var(--dash-text);">
                                     @expense.TransactionDate.ToString("dd MMM yyyy")
                                 </div>
-                                <span class="text-muted small" style="font-size: 0.75rem;">
-                                    @expense.TransactionDate.ToString("dddd")
-                                </span>
+                                <div class="d-flex align-items-center gap-1 text-muted small" style="font-size: 0.75rem;">
+                                    <span>@expense.TransactionDate.ToString("ddd")</span>
+                                    @if (expense.TransactionDate.TimeOfDay != TimeSpan.Zero)
+                                    {
+                                        <span class="badge bg-secondary-subtle text-secondary py-0 px-1" style="font-size: 0.68rem; font-weight: 500;">
+                                            🕒 @expense.TransactionDate.ToString("hh:mm tt")
+                                        </span>
+                                    }
+                                </div>
                             </td>
 
                             <!-- Description with notes / subcategory / tags -->
@@ -628,8 +634,8 @@
                 </div>
 
                 <div class="d-flex justify-content-between py-2 border-bottom">
-                    <span class="text-muted">Date</span>
-                    <span style="color: var(--dash-text);">@SelectedExpenseDetails.TransactionDate.ToString("dddd, dd MMMM yyyy")</span>
+                    <span class="text-muted">Date & Time</span>
+                    <span style="color: var(--dash-text);">@SelectedExpenseDetails.TransactionDate.ToString("dddd, dd MMMM yyyy, hh:mm tt")</span>
                 </div>
 
                 <div class="d-flex justify-content-between py-2 border-bottom align-items-center">
@@ -800,15 +806,22 @@
             @if (ImportResultInfo is not null)
             {
                 <div class="alert alert-success py-2 small mb-3">
-                    <h6 class="alert-heading mb-1 fw-bold">Import Completed!</h6>
-                    <ul class="mb-0 ps-3">
-                        <li>Added: <strong>@ImportResultInfo.InsertedCount</strong> new expense(s)</li>
-                        <li>Updated: <strong>@ImportResultInfo.UpdatedCount</strong> existing expense(s)</li>
-                        @if (ImportResultInfo.SkippedCount > 0)
-                        {
-                            <li class="text-danger">Skipped/Errors: <strong>@ImportResultInfo.SkippedCount</strong></li>
-                        }
-                    </ul>
+                    <h6 class="alert-heading mb-1 fw-bold">📥 Imported to Pending Transactions!</h6>
+                    <p class="mb-2">
+                        Sent <strong>@ImportResultInfo.InsertedCount</strong> transaction(s) to <strong>Pending Transactions</strong> for your verification and approval.
+                    </p>
+                    @if (ImportResultInfo.SkippedCount > 0)
+                    {
+                        <div class="text-danger mb-2">Skipped/Errors: <strong>@ImportResultInfo.SkippedCount</strong></div>
+                    }
+                    <div class="d-flex gap-2 mt-2">
+                        <a href="/pending" class="btn btn-success btn-sm fw-semibold">
+                            👉 Review & Approve in Pending
+                        </a>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CloseImportModal">
+                            Close
+                        </button>
+                    </div>
                 </div>
             }
 
@@ -856,11 +869,11 @@
                     @if (IsImporting)
                     {
                         <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                        <span>Importing...</span>
+                        <span>Sending to Pending...</span>
                     }
                     else
                     {
-                        <span>Confirm & Save (@ParsedPreviewItems.Count)</span>
+                        <span>📥 Send to Pending for Review (@ParsedPreviewItems.Count)</span>
                     }
                 </button>
             }
@@ -1408,7 +1421,7 @@
             ImportErrorMessage = null;
             StateHasChanged();
 
-            ImportResultInfo = await ExpenseService.ImportExpensesBatchAsync(ParsedPreviewItems, Session.CurrentUser?.GlobalId);
+            ImportResultInfo = await ExpenseService.ImportExpensesToPendingAsync(ParsedPreviewItems, Session.CurrentUser?.GlobalId);
 
             Categories = await ExpenseService.GetCategoriesAsync();
             await LoadExpenses();
