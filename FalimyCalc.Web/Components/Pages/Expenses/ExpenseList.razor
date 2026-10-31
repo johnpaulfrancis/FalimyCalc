@@ -842,6 +842,7 @@
                             <tr>
                                 <th>Date</th>
                                 <th>Title</th>
+                                <th>Account</th>
                                 <th>Category</th>
                                 <th class="text-end">Amount</th>
                             </tr>
@@ -849,11 +850,21 @@
                         <tbody>
                             @foreach (var row in ParsedPreviewItems.Take(30))
                             {
+                                var isCredit = row.Amount > 0;
                                 <tr>
                                     <td>@row.Date.ToString("dd MMM yyyy")</td>
-                                    <td>@row.Title</td>
+                                    <td>
+                                        <span>@row.Title</span>
+                                        @if (!string.IsNullOrWhiteSpace(row.ExternalId))
+                                        {
+                                            <span class="badge bg-secondary-subtle text-secondary ms-1 font-monospace" style="font-size: 0.7rem;">#@row.ExternalId</span>
+                                        }
+                                    </td>
+                                    <td>@(row.Account ?? "—")</td>
                                     <td>@(row.CategoryName ?? "—")</td>
-                                    <td class="text-end fw-semibold">₹ @Math.Abs(row.Amount).ToString("N2")</td>
+                                    <td class="text-end fw-semibold @(isCredit ? "text-success" : "text-danger")">
+                                        @(isCredit ? "+ " : "- ")₹ @Math.Abs(row.Amount).ToString("N2")
+                                    </td>
                                 </tr>
                             }
                         </tbody>
@@ -1423,7 +1434,6 @@
 
             ImportResultInfo = await ExpenseService.ImportExpensesToPendingAsync(ParsedPreviewItems, Session.CurrentUser?.GlobalId);
 
-            Categories = await ExpenseService.GetCategoriesAsync();
             await LoadExpenses();
         }
         catch (Exception ex)

@@ -11,6 +11,10 @@ public class ExpenseDto
     public string Description { get; set; } = string.Empty;
     public DateTime TransactionDate { get; set; }
     public Guid? CategoryGlobalId { get; set; }
+    public string? Subcategory { get; set; }
+    public string? Tags { get; set; }
+    public string? Note { get; set; }
+    public string? Account { get; set; }
     public string DeviceId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public DateTime ModifiedAt { get; set; }

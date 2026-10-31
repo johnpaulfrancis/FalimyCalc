@@ -148,6 +148,9 @@ else
             var isRejected = item.Status == PendingTransactionStatus.Rejected;
             var isExcelImport = !string.IsNullOrEmpty(item.RawSmsBody) && item.RawSmsBody.StartsWith("[Excel Import]");
             var parsedCatName = ExtractCategoryName(item.RawSmsBody);
+            var isSelfTransfer = !string.IsNullOrEmpty(item.RawSmsBody) && (item.RawSmsBody.Contains("Type: Self-Transfer") || item.RawSmsBody.Contains("self-transfer"));
+            var isTransferOutflow = isSelfTransfer && item.RawSmsBody.Contains("Outflow");
+            var isCredit = item.DetectedType == FalimyCalc.Shared.Enums.TransactionType.Credit;
 
             <div class="card shadow-sm border-0 position-relative" style="overflow: hidden; border-radius: 14px;">
                 <!-- Status accent line -->
@@ -169,14 +172,29 @@ else
                                 </div>
                             }
                             <div class="rounded-circle d-grid place-items-center text-center p-2"
-                                 style="width: 44px; height: 44px; background: @(isPending ? "rgba(245, 158, 11, 0.15)" : isApproved ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)");">
-                                <span class="fs-5">@(isPending ? (isExcelImport ? "📊" : "⏳") : isApproved ? "✅" : "❌")</span>
+                                 style="width: 44px; height: 44px; background: @(isPending ? (isSelfTransfer ? "rgba(59, 130, 246, 0.15)" : "rgba(245, 158, 11, 0.15)") : isApproved ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)");">
+                                <span class="fs-5">@(isPending ? (isSelfTransfer ? "🔄" : isExcelImport ? "📊" : "⏳") : isApproved ? "✅" : "❌")</span>
                             </div>
 
                             <div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
                                     <h6 class="mb-0 fw-bold">@(item.DetectedMerchant ?? "Unknown Merchant")</h6>
-                                    @if (isExcelImport)
+                                    @if (isSelfTransfer)
+                                    {
+                                        @if (isTransferOutflow)
+                                        {
+                                            <span class="badge bg-warning-subtle text-warning-emphasis small">
+                                                🔄 Self-Transfer (Outflow)
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-info-subtle text-info-emphasis small">
+                                                🔄 Self-Transfer (Inflow)
+                                            </span>
+                                        }
+                                    }
+                                    else if (isExcelImport)
                                     {
                                         <span class="badge bg-primary-subtle text-primary small">
                                             📊 Excel Import
@@ -222,8 +240,8 @@ else
 
                         <!-- Right Amount & Action Buttons -->
                         <div class="d-flex flex-column align-items-end justify-content-between gap-2 ms-auto">
-                            <div class="fs-4 fw-bold" style="color: var(--c-rose);">
-                                ₹ @(item.DetectedAmount?.ToString("N2") ?? "0.00")
+                            <div class="fs-4 fw-bold" style="color: @(isCredit ? "var(--c-emerald)" : "var(--c-rose)");">
+                                @(isCredit ? "+ " : "- ")₹ @(item.DetectedAmount?.ToString("N2") ?? "0.00")
                             </div>
 
                             @if (isPending)
@@ -260,61 +278,388 @@ else
     </div>
 }
 
-<!-- Approve Modal -->
+<!-- ── Edit / Approve Transaction Modal ────────────────────────────── -->
 @if (ApprovingItem is not null)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content shadow-lg border-0" style="background: var(--dash-surface); color: var(--dash-text); border-radius: 16px;">
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold">Approve Expense</h5>
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.65); backdrop-filter: blur(5px); z-index: 1055;">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0" style="background: var(--dash-surface); color: var(--dash-text); border-radius: 18px;">
+                <!-- Modal Header -->
+                <div class="modal-header border-bottom py-3 px-4 d-flex align-items-center justify-content-between" style="border-color: var(--dash-border) !important;">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fs-4">
+                            @(ModalTransactionType == "income" ? "📈" : ModalTransactionType == "transfer" ? "🔁" : "💸")
+                        </span>
+                        <div>
+                            <h5 class="modal-title fw-bold mb-0">
+                                @(ModalTransactionType == "income" ? "Approve / Edit Income" : ModalTransactionType == "transfer" ? "Approve / Edit Transfer" : "Approve / Edit Expense")
+                            </h5>
+                            <span class="small text-muted">Review, adjust details, or change transaction type</span>
+                        </div>
+                    </div>
                     <button type="button" class="btn-close" @onclick="CancelApprove"></button>
                 </div>
-                <div class="modal-body">
-                    <p class="text-muted small mb-3">Confirm or adjust details before adding this transaction to your verified expenses.</p>
 
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold">Description / Merchant <span class="text-danger">*</span></label>
-                        <input class="form-control" @bind="ApproveDescription" placeholder="Description" />
-                    </div>
-
-                    <div class="row g-2 mb-3">
-                        <div class="col-4">
-                            <label class="form-label small fw-semibold">Amount (₹) <span class="text-danger">*</span></label>
-                            <input type="number" step="0.01" class="form-control" @bind="ApproveAmount" />
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label small fw-semibold">Date</label>
-                            <input type="date" class="form-control" @bind="ApproveDateOnly" />
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label small fw-semibold">Time</label>
-                            <input type="time" class="form-control" @bind="ApproveTimeOnly" />
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold">Category <span class="text-danger">*</span></label>
-                        <select class="form-select" @bind="ApproveCategoryId">
-                            <option value="">-- Select Category --</option>
-                            @foreach (var cat in Categories)
-                            {
-                                <option value="@cat.GlobalId">@cat.Icon @cat.Name</option>
-                            }
-                        </select>
-                    </div>
-
-                    @if (!string.IsNullOrEmpty(ApproveError))
+                <!-- Modal Body -->
+                <div class="modal-body p-4">
+                    @if (!string.IsNullOrEmpty(ModalError))
                     {
-                        <div class="alert alert-danger py-1 small">@ApproveError</div>
+                        <div class="alert alert-danger py-2 px-3 small mb-3">
+                            @ModalError
+                        </div>
                     }
+
+                    <!-- 1. Transaction Type Switcher Tabs -->
+                    <div class="row g-2 mb-4">
+                        <div class="col-4">
+                            <button type="button" class="btn w-100 p-2 text-start type-tab @(ModalTransactionType == "expense" ? "active-expense" : "")"
+                                    @onclick='() => SetModalTransactionType("expense")'>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fs-4">💸</span>
+                                    <div>
+                                        <div class="fw-bold small">Expense</div>
+                                        <div class="text-muted type-tab-sub">Money going out</div>
+                                    </div>
+                                </div>
+                            </button>
+                        </div>
+                        <div class="col-4">
+                            <button type="button" class="btn w-100 p-2 text-start type-tab @(ModalTransactionType == "income" ? "active-income" : "")"
+                                    @onclick='() => SetModalTransactionType("income")'>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fs-4">📈</span>
+                                    <div>
+                                        <div class="fw-bold small">Income</div>
+                                        <div class="text-muted type-tab-sub">Money coming in</div>
+                                    </div>
+                                </div>
+                            </button>
+                        </div>
+                        <div class="col-4">
+                            <button type="button" class="btn w-100 p-2 text-start type-tab @(ModalTransactionType == "transfer" ? "active-transfer" : "")"
+                                    @onclick='() => SetModalTransactionType("transfer")'>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fs-4">🔁</span>
+                                    <div>
+                                        <div class="fw-bold small">Transfer</div>
+                                        <div class="text-muted type-tab-sub">Between accounts</div>
+                                    </div>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 2. Profile Selector (Admin only) -->
+                    @if (Session.CurrentUser?.Role == "Admin")
+                    {
+                        <div class="mb-4">
+                            <label class="form-label fw-semibold small text-muted text-uppercase mb-2">
+                                Profile / Added For
+                            </label>
+                            <div class="d-flex flex-wrap gap-2">
+                                @foreach (var member in FamilyMembers)
+                                {
+                                    var isSelected = ModalMemberId == member.GlobalId.ToString();
+                                    <button type="button"
+                                            class="btn member-select-chip @(isSelected ? "selected" : "")"
+                                            style="border-color: @(isSelected ? member.Colour ?? "var(--c-indigo)" : "var(--dash-border)");"
+                                            @onclick="() => ModalMemberId = member.GlobalId.ToString()">
+                                        <span class="fs-5">@member.Avatar</span>
+                                        <span class="fw-semibold small">@member.Name</span>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <!-- 3. Amount Input (Hero Field) -->
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                            Amount @(ModalTransactionType == "income" ? "Received" : ModalTransactionType == "transfer" ? "to Transfer" : "Spent") <span class="text-danger">*</span>
+                        </label>
+                        <div class="amount-input-wrap mb-2">
+                            <span class="amount-currency">₹</span>
+                            <input type="number"
+                                   step="0.01"
+                                   min="0"
+                                   class="form-control amount-input @(ModalTransactionType == "income" ? "amount-input--income" : ModalTransactionType == "transfer" ? "amount-input--transfer" : "")"
+                                   placeholder="0.00"
+                                   @bind="ModalAmount"
+                                   @bind:event="oninput" />
+                        </div>
+                        <!-- Quick Amount Increments -->
+                        <div class="d-flex flex-wrap gap-1 align-items-center">
+                            <span class="small text-muted me-1">Quick Add:</span>
+                            @if (ModalTransactionType == "income")
+                            {
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(500)">+₹500</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(1000)">+₹1,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(5000)">+₹5,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(10000)">+₹10,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(25000)">+₹25,000</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(100)">+₹100</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(500)">+₹500</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(1000)">+₹1,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(2000)">+₹2,000</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip" @onclick="() => AddModalAmount(5000)">+₹5,000</button>
+                            }
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 text-danger quick-chip" @onclick="() => ModalAmount = 0">Clear</button>
+                        </div>
+                    </div>
+
+                    <!-- 4. Description Field -->
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                            @(ModalTransactionType == "income" ? "Income Source / Description" : ModalTransactionType == "transfer" ? "Purpose / Transfer Description" : "Description / What was this for?") <span class="text-danger">*</span>
+                        </label>
+                        <input type="text"
+                               class="form-control form-control-lg fs-6"
+                               @bind="ModalDescription"
+                               placeholder="e.g. Transaction Description"
+                               maxlength="500" />
+                        <!-- Quick Description Suggestions -->
+                        <div class="d-flex flex-wrap gap-1 mt-2">
+                            <span class="small text-muted me-1 align-self-center">Suggestions:</span>
+                            @foreach (var suggestion in (ModalTransactionType == "income" ? IncomeSuggestions : ModalTransactionType == "transfer" ? TransferSuggestions : ExpenseSuggestions))
+                            {
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary py-0 px-2 suggestion-chip"
+                                        @onclick="() => ModalDescription = suggestion">
+                                    @suggestion
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    @if (ModalTransactionType == "transfer")
+                    {
+                        <!-- Transfer Specific Accounts (Source & Destination) -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    Source Account (Deducted From) <span class="text-danger">*</span>
+                                </label>
+                                <select class="form-select" @bind="ModalAccountString">
+                                    <option value="">— Select Source Account —</option>
+                                    @foreach (var acc in AvailableBankAccountsList)
+                                    {
+                                        var bal = GetAccountBalance(acc.GlobalId);
+                                        <option value="@acc.GlobalId">
+                                            @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                        </option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                    Destination Account (Received By) <span class="text-danger">*</span>
+                                </label>
+                                <select class="form-select" @bind="ModalTransferDestAccountString">
+                                    <option value="">— Select Destination Account —</option>
+                                    @foreach (var acc in AvailableBankAccountsList.Where(a => a.GlobalId != ModalAccountGlobalId))
+                                    {
+                                        var bal = GetAccountBalance(acc.GlobalId);
+                                        <option value="@acc.GlobalId">
+                                            @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                        </option>
+                                    }
+                                </select>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- 5. Category Selector (Visual Chips) -->
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label fw-semibold small text-muted text-uppercase mb-0">
+                                    Category @(ModalTransactionType == "income" ? "(Optional)" : "") <span class="text-danger">*</span>
+                                </label>
+                                <a href="/categories" target="_blank" class="small text-decoration-none text-primary">
+                                    + Manage Categories
+                                </a>
+                            </div>
+                            <div class="category-chips-grid mb-2">
+                                @if (!string.IsNullOrWhiteSpace(ModalSuggestedNewCategory))
+                                {
+                                    var isNewSelected = ModalCategoryValue == "NEW";
+                                    <button type="button"
+                                            class="category-select-pill @(isNewSelected ? "selected" : "")"
+                                            style="border-color: @(isNewSelected ? "var(--c-amber)" : "var(--dash-border)"); background: @(isNewSelected ? "rgba(245, 158, 11, 0.15)" : "transparent");"
+                                            @onclick='() => ModalCategoryValue = "NEW"'>
+                                        <span class="cat-pill-icon">✨</span>
+                                        <span class="cat-pill-text">Create "@ModalSuggestedNewCategory"</span>
+                                    </button>
+                                }
+                                <button type="button"
+                                        class="category-select-pill @(string.IsNullOrEmpty(ModalCategoryValue) ? "selected" : "")"
+                                        @onclick='() => ModalCategoryValue = ""'>
+                                    <span class="cat-pill-icon">📁</span>
+                                    <span class="cat-pill-text">Uncategorised</span>
+                                </button>
+                                @foreach (var cat in Categories)
+                                {
+                                    var isSelected = ModalCategoryValue == cat.GlobalId.ToString();
+                                    <button type="button"
+                                            class="category-select-pill @(isSelected ? "selected" : "")"
+                                            style="border-color: @(isSelected ? (cat.Colour ?? "var(--c-indigo)") : "var(--dash-border)"); background: @(isSelected ? (cat.Colour ?? "#6366f1") + "15" : "transparent");"
+                                            @onclick="() => ModalCategoryValue = cat.GlobalId.ToString()">
+                                        <span class="cat-pill-icon">@(string.IsNullOrWhiteSpace(cat.Icon) ? "📁" : cat.Icon)</span>
+                                        <span class="cat-pill-text">@cat.Name</span>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <!-- 6. Date & Time & Account Row -->
+                    <div class="row g-3 mb-4">
+                        <!-- Date & Time -->
+                        <div class="@(ModalTransactionType == "transfer" ? "col-12" : "col-md-5")">
+                            <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                                Date & Time <span class="text-danger">*</span>
+                            </label>
+                            <div class="row g-2 mb-1">
+                                <div class="col-7">
+                                    <input type="date" class="form-control" @bind="ModalDateOnly" />
+                                </div>
+                                <div class="col-5">
+                                    <input type="time" class="form-control" @bind="ModalTimeOnly" />
+                                </div>
+                            </div>
+                            <!-- Quick Date Chips -->
+                            <div class="d-flex gap-1 flex-wrap mb-1">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(ModalDate.Date == DateTime.Today ? "active" : "")"
+                                        @onclick="() => SetModalDate(DateTime.Today)">
+                                    Today
+                                </button>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary py-0 px-2 quick-chip @(ModalDate.Date == DateTime.Today.AddDays(-1) ? "active" : "")"
+                                        @onclick="() => SetModalDate(DateTime.Today.AddDays(-1))">
+                                    Yesterday
+                                </button>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-primary py-0 px-2 quick-chip"
+                                        @onclick="SetModalTimeToNow">
+                                    ⏱️ Now
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Bank Account Selector (for Expense / Income) -->
+                        @if (ModalTransactionType != "transfer")
+                        {
+                            <div class="col-md-7">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="form-label fw-semibold small text-muted text-uppercase mb-0">
+                                        @(ModalTransactionType == "income" ? "Deposited Into Account" : "Paid From Account")
+                                    </label>
+                                    <a href="/accounts" target="_blank" class="small text-decoration-none text-primary">
+                                        + Manage Accounts
+                                    </a>
+                                </div>
+
+                                @if (!AvailableBankAccountsList.Any())
+                                {
+                                    <input type="text" class="form-control form-control-sm" placeholder="Account Name (e.g. Cash, HDFC)" @bind="ModalAccountName" />
+                                }
+                                else
+                                {
+                                    <select class="form-select" @bind="ModalAccountString">
+                                        <option value="">— Select Bank Account —</option>
+                                        @foreach (var acc in AvailableBankAccountsList)
+                                        {
+                                            var bal = GetAccountBalance(acc.GlobalId);
+                                            <option value="@acc.GlobalId">
+                                                @acc.Icon @acc.AccountName (₹ @bal.ToString("N2"))
+                                            </option>
+                                        }
+                                    </select>
+                                    <span class="small text-muted d-block mt-1" style="font-size: 0.72rem;">
+                                        @(ModalTransactionType == "income" ? "Account receiving this deposit" : "Account paying for this expense")
+                                    </span>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <!-- 7. Additional Details (Notes, Tags, Subcategory) -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-semibold small text-muted text-uppercase">
+                                Additional Details <span class="fw-normal text-muted">(Optional)</span>
+                            </span>
+                            <button type="button"
+                                    class="btn btn-link btn-sm p-0 text-decoration-none text-muted"
+                                    @onclick="() => ModalShowExtraDetails = !ModalShowExtraDetails">
+                                @(ModalShowExtraDetails ? "▲ Hide Details" : "▼ Add Notes, Tags & Subcategory")
+                            </button>
+                        </div>
+
+                        @if (ModalShowExtraDetails)
+                        {
+                            <div class="p-3 rounded-3" style="background: var(--dash-surface-raised); border: 1px solid var(--dash-border);">
+                                <div class="row g-3">
+                                    @if (ModalTransactionType != "transfer")
+                                    {
+                                        <div class="col-md-6">
+                                            <label class="form-label small fw-semibold">Subcategory</label>
+                                            <input type="text"
+                                                   class="form-control form-control-sm"
+                                                   placeholder="@(ModalTransactionType == "income" ? "e.g. Salary, Dividend, Bonus" : "e.g. Vegetables, Dinner, Fuel")"
+                                                   @bind="ModalSubcategory" />
+                                        </div>
+                                    }
+
+                                    <div class="@(ModalTransactionType == "transfer" ? "col-12" : "col-md-6")">
+                                        <label class="form-label small fw-semibold">Tags</label>
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="e.g. #personal, #urgent, #office"
+                                               @bind="ModalTags" />
+                                    </div>
+
+                                    <div class="col-12">
+                                        <label class="form-label small fw-semibold">Notes / Remarks</label>
+                                        <textarea class="form-control form-control-sm"
+                                                  rows="2"
+                                                  placeholder="Add any specific memo or details..."
+                                                  @bind="ModalNote"></textarea>
+                                    </div>
+
+                                    @if (!string.IsNullOrEmpty(ApprovingItem.RawSmsBody))
+                                    {
+                                        <div class="col-12">
+                                            <label class="form-label small fw-semibold text-muted" style="font-size: 0.72rem;">Original Import / SMS Body</label>
+                                            <div class="p-2 rounded font-monospace small" style="background: rgba(0,0,0,0.04); border: 1px dashed var(--dash-border); font-size: 0.75rem;">
+                                                @ApprovingItem.RawSmsBody
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
                 </div>
-                <div class="modal-footer border-0 pt-0">
-                    <button class="btn btn-outline-secondary" @onclick="CancelApprove">Cancel</button>
-                    <button class="btn btn-success" @onclick="SaveApproval" disabled="@IsProcessing">
-                        @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                        Confirm & Save Expense
-                    </button>
+
+                <!-- Modal Footer -->
+                <div class="modal-footer border-top py-3 px-4 d-flex justify-content-between align-items-center" style="border-color: var(--dash-border) !important;">
+                    <button class="btn btn-outline-secondary" @onclick="CancelApprove" disabled="@IsProcessing">Cancel</button>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-primary" @onclick="SavePendingChangesAsync" disabled="@IsProcessing" title="Save changes and keep in pending list">
+                            @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            💾 Save to Pending
+                        </button>
+                        <button class="btn @(ModalTransactionType == "income" ? "btn-success" : "btn-primary") fw-semibold px-4"
+                                @onclick="SaveApproval" disabled="@IsProcessing">
+                            @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            ✓ Approve & Save
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -387,6 +732,9 @@ else
 @code {
     private List<PendingTransaction> AllItems = [];
     private List<Category> Categories = [];
+    private List<BankAccount> AllBankAccounts = [];
+    private List<ExpenseService.BankAccountWithBalance> AccountsWithBalances = [];
+    private List<FamilyMember> FamilyMembers = [];
     private PendingTransactionStatus? ActiveFilter = PendingTransactionStatus.Pending;
     private bool IsLoading = true;
     private bool IsProcessing = false;
@@ -400,13 +748,87 @@ else
         ? AllItems.Where(x => x.Status == ActiveFilter.Value)
         : AllItems;
 
-    // Approve Modal state
+    // ── Edit / Approve Modal State ─────────────────────────────────────────
     private PendingTransaction? ApprovingItem;
-    private string ApproveDescription = string.Empty;
-    private decimal ApproveAmount = 0;
-    private DateTime ApproveDate = DateTime.Today;
-    private Guid? ApproveCategoryId;
-    private string? ApproveError;
+    private string ModalTransactionType = "expense"; // "expense" | "income" | "transfer"
+    private decimal ModalAmount = 0;
+    private string ModalDescription = string.Empty;
+    private DateTime ModalDate = DateTime.Today;
+    private string ModalCategoryValue = string.Empty;
+    private string? ModalSuggestedNewCategory;
+    private string? ModalMemberId;
+    private Guid? ModalAccountGlobalId;
+    private string? ModalAccountName;
+    private Guid? ModalTransferDestAccountId;
+    private string? ModalSubcategory;
+    private string? ModalTags;
+    private string? ModalNote;
+    private bool ModalShowExtraDetails = false;
+    private string? ModalError;
+
+    private string? ModalAccountString
+    {
+        get => ModalAccountGlobalId?.ToString() ?? "";
+        set
+        {
+            if (Guid.TryParse(value, out var g))
+            {
+                ModalAccountGlobalId = g;
+                var acc = AllBankAccounts.FirstOrDefault(a => a.GlobalId == g);
+                ModalAccountName = acc?.AccountName;
+            }
+            else
+            {
+                ModalAccountGlobalId = null;
+            }
+        }
+    }
+
+    private string? ModalTransferDestAccountString
+    {
+        get => ModalTransferDestAccountId?.ToString() ?? "";
+        set
+        {
+            if (Guid.TryParse(value, out var g))
+                ModalTransferDestAccountId = g;
+            else
+                ModalTransferDestAccountId = null;
+        }
+    }
+
+    private List<BankAccount> AvailableBankAccountsList
+    {
+        get
+        {
+            if (Guid.TryParse(ModalMemberId, out var mId))
+            {
+                var filtered = AllBankAccounts.Where(a => a.MemberGlobalId == mId || a.HasMemberAccess(mId)).ToList();
+                if (filtered.Any()) return filtered;
+            }
+            return AllBankAccounts;
+        }
+    }
+
+    private decimal GetAccountBalance(Guid accountGlobalId)
+    {
+        var found = AccountsWithBalances.FirstOrDefault(a => a.Account.GlobalId == accountGlobalId);
+        return found?.CurrentBalance ?? 0m;
+    }
+
+    private static readonly List<string> ExpenseSuggestions =
+    [
+        "🛒 Groceries", "⛽ Petrol / Fuel", "⚡ Electricity Bill", "🍕 Dining Out", "💊 Medicines", "📶 Mobile Recharge"
+    ];
+
+    private static readonly List<string> IncomeSuggestions =
+    [
+        "💼 Monthly Salary", "💻 Freelance Payment", "📈 Dividend / Return", "🎁 Cash Gift", "🏦 Bank Interest", "🏷️ Cashback / Refund"
+    ];
+
+    private static readonly List<string> TransferSuggestions =
+    [
+        "🏧 ATM Cash Withdrawal", "💳 Credit Card Bill Pay", "💰 Savings Allocation", "📱 Wallet Top-up", "🏦 Inter-bank Transfer"
+    ];
 
     // Simulate Modal state
     private bool ShowSimulate = false;
@@ -426,6 +848,9 @@ else
         IsLoading = true;
         AllItems = await ExpenseService.GetPendingTransactionsAsync();
         Categories = await ExpenseService.GetCategoriesAsync();
+        AllBankAccounts = await ExpenseService.GetBankAccountsAsync();
+        AccountsWithBalances = await ExpenseService.GetBankAccountsWithBalancesAsync();
+        FamilyMembers = await ExpenseService.GetFamilyMembersAsync();
         IsLoading = false;
     }
 
@@ -533,40 +958,169 @@ else
         }
     }
 
-    private DateOnly ApproveDateOnly
+    private DateOnly ModalDateOnly
     {
-        get => DateOnly.FromDateTime(ApproveDate);
-        set => ApproveDate = new DateTime(value.Year, value.Month, value.Day, ApproveDate.Hour, ApproveDate.Minute, ApproveDate.Second);
+        get => DateOnly.FromDateTime(ModalDate);
+        set => ModalDate = new DateTime(value.Year, value.Month, value.Day, ModalDate.Hour, ModalDate.Minute, ModalDate.Second);
     }
 
-    private TimeOnly ApproveTimeOnly
+    private TimeOnly ModalTimeOnly
     {
-        get => TimeOnly.FromDateTime(ApproveDate);
-        set => ApproveDate = new DateTime(ApproveDate.Year, ApproveDate.Month, ApproveDate.Day, value.Hour, value.Minute, 0);
+        get => TimeOnly.FromDateTime(ModalDate);
+        set => ModalDate = new DateTime(ModalDate.Year, ModalDate.Month, ModalDate.Day, value.Hour, value.Minute, 0);
+    }
+
+    private void SetModalTransactionType(string type)
+    {
+        ModalTransactionType = type;
+        if (ModalTransactionType == "transfer" && !ModalTransferDestAccountId.HasValue)
+        {
+            var other = AllBankAccounts.FirstOrDefault(a => a.GlobalId != ModalAccountGlobalId);
+            if (other != null) ModalTransferDestAccountId = other.GlobalId;
+        }
+    }
+
+    private void AddModalAmount(decimal delta)
+    {
+        ModalAmount += delta;
+    }
+
+    private void SetModalDate(DateTime date)
+    {
+        ModalDate = new DateTime(date.Year, date.Month, date.Day, ModalDate.Hour, ModalDate.Minute, ModalDate.Second);
+    }
+
+    private void SetModalTimeToNow()
+    {
+        var now = DateTime.Now;
+        ModalDate = new DateTime(ModalDate.Year, ModalDate.Month, ModalDate.Day, now.Hour, now.Minute, 0);
     }
 
     private void StartApprove(PendingTransaction item)
     {
         ApprovingItem = item;
-        ApproveDescription = item.DetectedMerchant ?? "Expense";
-        ApproveAmount = item.DetectedAmount ?? 0;
-        ApproveDate = item.DetectedDate ?? DateTime.Now;
+        ModalError = null;
+        ModalShowExtraDetails = false;
 
-        // Auto-match category by Excel metadata or keyword
+        // 1. Determine initial type
+        if (!string.IsNullOrEmpty(item.RawSmsBody) && (item.RawSmsBody.Contains("self-transfer", StringComparison.OrdinalIgnoreCase) || item.RawSmsBody.Contains("Type: Self-Transfer", StringComparison.OrdinalIgnoreCase)))
+        {
+            ModalTransactionType = "transfer";
+        }
+        else if (item.DetectedType == TransactionType.Credit || (!string.IsNullOrEmpty(item.RawSmsBody) && item.RawSmsBody.Contains("Tags: income", StringComparison.OrdinalIgnoreCase)))
+        {
+            ModalTransactionType = "income";
+        }
+        else
+        {
+            ModalTransactionType = "expense";
+        }
+
+        // 2. Amount & Description
+        ModalAmount = Math.Abs(item.DetectedAmount ?? 0);
+        ModalDescription = item.DetectedMerchant ?? (ModalTransactionType == "income" ? "Income" : "Expense");
+
+        // 3. Date & Time
+        ModalDate = item.DetectedDate ?? item.CreatedAt;
+
+        // 4. Member / Profile
+        ModalMemberId = Session.CurrentUser?.GlobalId.ToString();
+
+        // 5. Category
         var catName = ExtractCategoryName(item.RawSmsBody);
-        if (!string.IsNullOrEmpty(catName))
+        ModalSuggestedNewCategory = null;
+        if ((!string.IsNullOrEmpty(item.RawSmsBody) && item.RawSmsBody.Contains("self-transfer", StringComparison.OrdinalIgnoreCase)) ||
+            string.Equals(catName, "Transfer", StringComparison.OrdinalIgnoreCase))
+        {
+            var transferCat = Categories.FirstOrDefault(c => string.Equals(c.Name, "Transfer", StringComparison.OrdinalIgnoreCase));
+            if (transferCat != null)
+            {
+                ModalCategoryValue = transferCat.GlobalId.ToString();
+            }
+        }
+        else if (!string.IsNullOrEmpty(catName))
         {
             var match = Categories.FirstOrDefault(c => string.Equals(c.Name, catName, StringComparison.OrdinalIgnoreCase));
             if (match != null)
             {
-                ApproveCategoryId = match.GlobalId;
-                ApproveError = null;
-                return;
+                ModalCategoryValue = match.GlobalId.ToString();
+            }
+            else
+            {
+                ModalSuggestedNewCategory = catName;
+                ModalCategoryValue = "NEW";
+            }
+        }
+        else
+        {
+            var matchedId = AutoMatchCategory(ModalDescription);
+            ModalCategoryValue = matchedId.HasValue ? matchedId.Value.ToString() : string.Empty;
+        }
+
+        // 6. Bank Account
+        ModalAccountName = item.DetectedAccount ?? item.DetectedBank;
+        ModalAccountGlobalId = null;
+        if (!string.IsNullOrWhiteSpace(ModalAccountName))
+        {
+            var matchedAcc = AllBankAccounts.FirstOrDefault(a =>
+                string.Equals(a.AccountName, ModalAccountName, StringComparison.OrdinalIgnoreCase) ||
+                (a.AccountNumberSuffix != null && ModalAccountName.Contains(a.AccountNumberSuffix)));
+            if (matchedAcc != null)
+            {
+                ModalAccountGlobalId = matchedAcc.GlobalId;
+                ModalAccountName = matchedAcc.AccountName;
+            }
+        }
+        if (!ModalAccountGlobalId.HasValue && AllBankAccounts.Any())
+        {
+            ModalAccountGlobalId = AllBankAccounts.First().GlobalId;
+            ModalAccountName = AllBankAccounts.First().AccountName;
+        }
+
+        // Destination account for transfers
+        ModalTransferDestAccountId = null;
+        if (ModalTransactionType == "transfer")
+        {
+            var toMatch = System.Text.RegularExpressions.Regex.Match(item.RawSmsBody ?? "", @"ToAccount:\s*([^|\r\n]+)");
+            if (toMatch.Success)
+            {
+                var toName = toMatch.Groups[1].Value.Trim();
+                var toAcc = AllBankAccounts.FirstOrDefault(a => string.Equals(a.AccountName, toName, StringComparison.OrdinalIgnoreCase) || (a.AccountNumberSuffix != null && toName.Contains(a.AccountNumberSuffix)));
+                if (toAcc != null) ModalTransferDestAccountId = toAcc.GlobalId;
+            }
+            if (!ModalTransferDestAccountId.HasValue)
+            {
+                var otherAcc = AllBankAccounts.FirstOrDefault(a => a.GlobalId != ModalAccountGlobalId);
+                if (otherAcc != null) ModalTransferDestAccountId = otherAcc.GlobalId;
             }
         }
 
-        ApproveCategoryId = AutoMatchCategory(ApproveDescription);
-        ApproveError = null;
+        // 7. Extract Note, Tags, Subcategory
+        ModalNote = null;
+        if (!string.IsNullOrEmpty(item.RawSmsBody) && item.RawSmsBody.Contains("Note:"))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(item.RawSmsBody, @"Note:\s*([^|\r\n]+)");
+            if (m.Success) ModalNote = m.Groups[1].Value.Trim();
+        }
+
+        ModalTags = null;
+        if (!string.IsNullOrEmpty(item.RawSmsBody) && item.RawSmsBody.Contains("Tags:"))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(item.RawSmsBody, @"Tags:\s*([^|\r\n]+)");
+            if (m.Success) ModalTags = m.Groups[1].Value.Trim();
+        }
+
+        ModalSubcategory = null;
+        if (!string.IsNullOrEmpty(item.RawSmsBody) && item.RawSmsBody.Contains("Subcategory:"))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(item.RawSmsBody, @"Subcategory:\s*([^|\r\n]+)");
+            if (m.Success) ModalSubcategory = m.Groups[1].Value.Trim();
+        }
+
+        if (!string.IsNullOrEmpty(ModalNote) || !string.IsNullOrEmpty(ModalTags) || !string.IsNullOrEmpty(ModalSubcategory))
+        {
+            ModalShowExtraDetails = true;
+        }
     }
 
     private void StartEditApprove(PendingTransaction item)
@@ -602,44 +1156,153 @@ else
     private void CancelApprove()
     {
         ApprovingItem = null;
-        ApproveError = null;
+        ModalSuggestedNewCategory = null;
+        ModalCategoryValue = string.Empty;
+        ModalError = null;
     }
 
     private async Task SaveApproval()
     {
         if (ApprovingItem is null) return;
 
-        if (string.IsNullOrWhiteSpace(ApproveDescription))
+        if (string.IsNullOrWhiteSpace(ModalDescription))
         {
-            ApproveError = "Description is required.";
+            ModalError = "Description is required.";
             return;
         }
 
-        if (ApproveAmount <= 0)
+        if (ModalAmount <= 0)
         {
-            ApproveError = "Amount must be greater than zero.";
+            ModalError = "Amount must be greater than zero.";
+            return;
+        }
+
+        if (ModalTransactionType == "transfer")
+        {
+            if (!ModalAccountGlobalId.HasValue || !ModalTransferDestAccountId.HasValue)
+            {
+                ModalError = "Please select both Source and Destination bank accounts for the transfer.";
+                return;
+            }
+            if (ModalAccountGlobalId.Value == ModalTransferDestAccountId.Value)
+            {
+                ModalError = "Source and Destination accounts must be different.";
+                return;
+            }
+        }
+
+        Guid? selectedCategoryGuid = null;
+        string? newCatNameToCreate = null;
+
+        if (ModalTransactionType != "transfer")
+        {
+            if (ModalCategoryValue == "NEW" && !string.IsNullOrWhiteSpace(ModalSuggestedNewCategory))
+            {
+                newCatNameToCreate = ModalSuggestedNewCategory.Trim();
+            }
+            else if (Guid.TryParse(ModalCategoryValue, out var parsedGuid))
+            {
+                selectedCategoryGuid = parsedGuid;
+            }
+            else if (ModalTransactionType == "expense")
+            {
+                ModalError = "Please select or create a category.";
+                return;
+            }
+        }
+
+        IsProcessing = true;
+        try
+        {
+            Guid? memberGuid = Guid.TryParse(ModalMemberId, out var mId) ? mId : Session.CurrentUser?.GlobalId;
+
+            await ExpenseService.ApprovePendingTransactionAdvancedAsync(new ExpenseService.ApprovePendingRequest(
+                PendingId: ApprovingItem.GlobalId,
+                TransactionType: ModalTransactionType,
+                Amount: ModalAmount,
+                Description: ModalDescription.Trim(),
+                TransactionDate: ModalDate,
+                CategoryGlobalId: selectedCategoryGuid,
+                NewCategoryName: newCatNameToCreate,
+                AccountGlobalId: ModalAccountGlobalId,
+                AccountName: ModalAccountName,
+                MemberGlobalId: memberGuid,
+                Subcategory: ModalSubcategory,
+                Tags: ModalTags,
+                Note: ModalNote,
+                DestinationAccountGlobalId: ModalTransferDestAccountId
+            ));
+
+            SuccessMessage = $"Approved \"{ModalDescription}\" successfully!";
+            ApprovingItem = null;
+            ModalSuggestedNewCategory = null;
+            ModalCategoryValue = string.Empty;
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            ModalError = $"Failed to approve: {ex.Message}";
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task SavePendingChangesAsync()
+    {
+        if (ApprovingItem is null) return;
+
+        if (string.IsNullOrWhiteSpace(ModalDescription))
+        {
+            ModalError = "Description is required.";
+            return;
+        }
+
+        if (ModalAmount <= 0)
+        {
+            ModalError = "Amount must be greater than zero.";
             return;
         }
 
         IsProcessing = true;
         try
         {
-            await ExpenseService.ApprovePendingTransactionAsync(
-                ApprovingItem.GlobalId,
-                ApproveCategoryId,
-                ApproveAmount,
-                ApproveDescription.Trim(),
-                ApproveDate,
-                Session.CurrentUser?.GlobalId
-            );
+            string? catName = null;
+            if (ModalCategoryValue == "NEW") catName = ModalSuggestedNewCategory;
+            else if (Guid.TryParse(ModalCategoryValue, out var g))
+            {
+                catName = Categories.FirstOrDefault(c => c.GlobalId == g)?.Name;
+            }
 
-            SuccessMessage = $"Approved \"{ApproveDescription}\" as an expense!";
-            ApprovingItem = null;
-            await LoadData();
+            var success = await ExpenseService.UpdatePendingTransactionAsync(new ExpenseService.UpdatePendingRequest(
+                PendingId: ApprovingItem.GlobalId,
+                TransactionType: ModalTransactionType,
+                Amount: ModalAmount,
+                Description: ModalDescription.Trim(),
+                TransactionDate: ModalDate,
+                Account: ModalAccountName,
+                Bank: ModalAccountName,
+                CategoryName: catName,
+                Subcategory: ModalSubcategory,
+                Tags: ModalTags,
+                Note: ModalNote
+            ));
+
+            if (success)
+            {
+                SuccessMessage = $"Updated pending transaction \"{ModalDescription}\"!";
+                ApprovingItem = null;
+                await LoadData();
+            }
+            else
+            {
+                ModalError = "Failed to update pending transaction.";
+            }
         }
         catch (Exception ex)
         {
-            ApproveError = $"Failed to approve: {ex.Message}";
+            ModalError = $"Failed to update: {ex.Message}";
         }
         finally
         {
@@ -734,3 +1397,146 @@ else
         }
     }
 }
+
+<style>
+    .type-tab {
+        border: 2px solid var(--dash-border);
+        border-radius: 12px;
+        background: var(--dash-surface);
+        color: var(--dash-text);
+        transition: all 0.15s ease;
+    }
+    .type-tab:hover {
+        border-color: var(--dash-primary);
+        background: var(--dash-surface-raised);
+    }
+    .type-tab.active-expense {
+        border-color: var(--c-rose, #f43f5e) !important;
+        background: rgba(244, 63, 94, 0.08) !important;
+        box-shadow: 0 0 0 1px var(--c-rose, #f43f5e);
+    }
+    .type-tab.active-income {
+        border-color: var(--c-emerald, #10b981) !important;
+        background: rgba(16, 185, 129, 0.08) !important;
+        box-shadow: 0 0 0 1px var(--c-emerald, #10b981);
+    }
+    .type-tab.active-transfer {
+        border-color: var(--dash-primary) !important;
+        background: rgba(99, 102, 241, 0.08) !important;
+        box-shadow: 0 0 0 1px var(--dash-primary);
+    }
+    .type-tab-sub {
+        font-size: 0.72rem;
+    }
+
+    .amount-input-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+    .amount-currency {
+        position: absolute;
+        left: 1rem;
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: var(--dash-text-muted);
+        pointer-events: none;
+    }
+    .amount-input {
+        padding-left: 2.8rem !important;
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+        height: 60px;
+        border-radius: 10px;
+        color: var(--c-rose, #f43f5e) !important;
+        background: var(--dash-surface-raised) !important;
+        border: 2px solid var(--dash-border) !important;
+    }
+    .amount-input--income {
+        color: var(--c-emerald, #10b981) !important;
+    }
+    .amount-input--transfer {
+        color: var(--dash-primary) !important;
+    }
+    .amount-input:focus {
+        border-color: var(--dash-primary) !important;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+    }
+    .quick-chip {
+        font-size: 0.78rem;
+        border-radius: 6px;
+        transition: all 0.1s ease;
+    }
+    .quick-chip:hover {
+        background-color: var(--dash-surface-raised);
+    }
+    .quick-chip.active {
+        background-color: var(--dash-primary);
+        color: white !important;
+        border-color: var(--dash-primary);
+    }
+    .suggestion-chip {
+        font-size: 0.75rem;
+        border-radius: 12px;
+        padding: 2px 8px !important;
+    }
+    .category-chips-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        max-height: 180px;
+        overflow-y: auto;
+        padding: 6px;
+        background: var(--dash-surface-raised);
+        border: 1px solid var(--dash-border);
+        border-radius: 10px;
+    }
+    .category-select-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.65rem;
+        border: 1.5px solid var(--dash-border);
+        border-radius: 20px;
+        background: var(--dash-surface);
+        color: var(--dash-text);
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: all 0.12s ease;
+    }
+    .category-select-pill:hover {
+        border-color: var(--dash-primary);
+        background: var(--dash-surface-raised);
+    }
+    .category-select-pill.selected {
+        font-weight: 600;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .cat-pill-icon {
+        font-size: 0.95rem;
+    }
+    .cat-pill-text {
+        white-space: nowrap;
+    }
+
+    .member-select-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 0.85rem;
+        border: 2px solid var(--dash-border);
+        border-radius: 20px;
+        background: var(--dash-surface);
+        color: var(--dash-text);
+        transition: all 0.15s ease;
+    }
+    .member-select-chip:hover {
+        border-color: var(--dash-primary);
+        background: var(--dash-surface-raised);
+    }
+    .member-select-chip.selected {
+        border-color: var(--dash-primary) !important;
+        background: rgba(99, 102, 241, 0.1) !important;
+        box-shadow: 0 0 0 1px var(--dash-primary);
+    }
+</style>

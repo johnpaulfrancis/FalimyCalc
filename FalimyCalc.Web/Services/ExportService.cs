@@ -139,7 +139,7 @@ public class ExportService
             return -1;
         }
 
-        int idCol = GetCol("ID", "Id", "Guid", "GlobalId");
+        int idCol = GetCol("ID", "Id", "Guid", "GlobalId", "TransactionId", "Transaction Id", "TxId", "TxnId", "Txn Id", "Reference", "ReferenceId", "RefId", "Ref");
         int amountCol = GetCol("Amount", "Amt", "Cost");
         int dateCol = GetCol("Date", "Transaction Date", "TransactionDate", "Time");
         int titleCol = GetCol("Title", "Description", "Desc", "Merchant");
@@ -162,14 +162,19 @@ public class ExportService
             // Skip empty rows
             if (ws.Row(r).IsEmpty()) continue;
 
-            // ID
+            // ID / External Identifier
             Guid? globalId = null;
+            string? externalId = null;
             if (idCol != -1)
             {
                 var idStr = ws.Cell(r, idCol).GetString().Trim();
-                if (Guid.TryParse(idStr, out var parsedGuid))
+                if (!string.IsNullOrEmpty(idStr))
                 {
-                    globalId = parsedGuid;
+                    externalId = idStr;
+                    if (Guid.TryParse(idStr, out var parsedGuid))
+                    {
+                        globalId = parsedGuid;
+                    }
                 }
             }
 
@@ -252,7 +257,8 @@ public class ExportService
                 currency,
                 category,
                 subcategory,
-                tags
+                tags,
+                externalId
             ));
         }
 

@@ -123,6 +123,10 @@ public class SyncService
                     existing.TransactionDate = dto.TransactionDate;
                     existing.CategoryGlobalId = dto.CategoryGlobalId;
                     existing.CategoryId = await ResolveCategoryIdAsync(dto.CategoryGlobalId);
+                    existing.Subcategory = dto.Subcategory;
+                    existing.Tags = dto.Tags;
+                    existing.Note = dto.Note;
+                    existing.Account = dto.Account;
                     existing.IsDeleted = dto.IsDeleted;
                     existing.ModifiedAt = dto.ModifiedAt;
                     existing.DeviceId = dto.DeviceId;
@@ -211,6 +215,10 @@ public class SyncService
         Description = e.Description,
         TransactionDate = e.TransactionDate,
         CategoryGlobalId = e.CategoryGlobalId,
+        Subcategory = e.Subcategory,
+        Tags = e.Tags,
+        Note = e.Note,
+        Account = e.Account,
         DeviceId = e.DeviceId,
         CreatedAt = e.CreatedAt,
         ModifiedAt = e.ModifiedAt,
@@ -256,6 +264,10 @@ public class SyncService
         Description = dto.Description,
         TransactionDate = dto.TransactionDate,
         CategoryGlobalId = dto.CategoryGlobalId,
+        Subcategory = dto.Subcategory,
+        Tags = dto.Tags,
+        Note = dto.Note,
+        Account = dto.Account,
         DeviceId = dto.DeviceId,
         CreatedAt = dto.CreatedAt,
         ModifiedAt = dto.ModifiedAt,

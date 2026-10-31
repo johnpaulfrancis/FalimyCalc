@@ -64,7 +64,7 @@
 
     <!-- ── Transaction Type Switcher Tabs ─────────────────────────────────── -->
     <div class="row g-2 mb-4">
-        <div class="@(IsEditMode ? "col-6" : "col-4")">
+        <div class="col-4">
             <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "expense" ? "active-expense" : "")"
                     @onclick='() => SetTransactionType("expense")'>
                 <div class="d-flex align-items-center gap-2">
@@ -76,7 +76,7 @@
                 </div>
             </button>
         </div>
-        <div class="@(IsEditMode ? "col-6" : "col-4")">
+        <div class="col-4">
             <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "income" ? "active-income" : "")"
                     @onclick='() => SetTransactionType("income")'>
                 <div class="d-flex align-items-center gap-2">
@@ -88,21 +88,18 @@
                 </div>
             </button>
         </div>
-        @if (!IsEditMode)
-        {
-            <div class="col-4">
-                <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "transfer" ? "active-transfer" : "")"
-                        @onclick='() => SetTransactionType("transfer")'>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="fs-4">🔁</span>
-                        <div>
-                            <div class="fw-bold small">Transfer</div>
-                            <div class="text-muted type-tab-sub">Between accounts</div>
-                        </div>
+        <div class="col-4">
+            <button type="button" class="btn w-100 p-2 text-start type-tab @(SelectedType == "transfer" ? "active-transfer" : "")"
+                    @onclick='() => SetTransactionType("transfer")'>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fs-4">🔁</span>
+                    <div>
+                        <div class="fw-bold small">Transfer</div>
+                        <div class="text-muted type-tab-sub">Between accounts</div>
                     </div>
-                </button>
-            </div>
-        }
+                </div>
+            </button>
+        </div>
     </div>
 
     @if (IsLoading)
@@ -1167,7 +1164,15 @@
 
     // Transfer fields
     private Guid? TransferSourceAccountId;
-    private string? TransferSourceAccountString;
+    private string? TransferSourceAccountString
+    {
+        get => TransferSourceAccountId?.ToString();
+        set
+        {
+            if (Guid.TryParse(value, out var g)) TransferSourceAccountId = g;
+            else TransferSourceAccountId = null;
+        }
+    }
     private Guid? TransferDestAccountId;
     private string? TransferDestAccountString
     {
@@ -1372,6 +1377,52 @@
             if (ExpenseService.IsTransferTransaction(expense))
             {
                 SelectedType = "transfer";
+                TransferAmount = Math.Abs(expense.Amount);
+                TransferDescription = expense.Description;
+                TransferDate = expense.TransactionDate;
+                TransferNote = expense.Note;
+
+                var isTransferOut = ExpenseService.IsTransferOutTransaction(expense);
+                var peer = await ExpenseService.GetTransferPeerAsync(expense.GlobalId);
+
+                if (isTransferOut)
+                {
+                    TransferSourceAccountId = expense.AccountGlobalId;
+                    TransferDestAccountId = peer?.AccountGlobalId;
+                }
+                else
+                {
+                    TransferDestAccountId = expense.AccountGlobalId;
+                    TransferSourceAccountId = peer?.AccountGlobalId;
+                }
+
+                // If peer destination/source account couldn't be resolved, check Note / Description
+                if (!TransferDestAccountId.HasValue && !string.IsNullOrWhiteSpace(expense.Note))
+                {
+                    var matchTo = System.Text.RegularExpressions.Regex.Match(expense.Note, @"(To|destination):\s*([^)\r\n]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (matchTo.Success)
+                    {
+                        var destName = matchTo.Groups[2].Value.Trim();
+                        var acc = AllBankAccounts.FirstOrDefault(a => string.Equals(a.AccountName, destName, StringComparison.OrdinalIgnoreCase));
+                        if (acc != null) TransferDestAccountId = acc.GlobalId;
+                    }
+                }
+                if (!TransferSourceAccountId.HasValue && !string.IsNullOrWhiteSpace(expense.Note))
+                {
+                    var matchFrom = System.Text.RegularExpressions.Regex.Match(expense.Note, @"(From|source):\s*([^)\r\n]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (matchFrom.Success)
+                    {
+                        var srcName = matchFrom.Groups[2].Value.Trim();
+                        var acc = AllBankAccounts.FirstOrDefault(a => string.Equals(a.AccountName, srcName, StringComparison.OrdinalIgnoreCase));
+                        if (acc != null) TransferSourceAccountId = acc.GlobalId;
+                    }
+                }
+
+                if (!TransferDestAccountId.HasValue && TransferSourceAccountId.HasValue)
+                {
+                    var other = AvailableBankAccountsList.FirstOrDefault(a => a.GlobalId != TransferSourceAccountId.Value);
+                    if (other != null) TransferDestAccountId = other.GlobalId;
+                }
             }
             else if (ExpenseService.IsIncomeTransaction(expense))
             {
@@ -1621,15 +1672,32 @@
                 ? (Guid.TryParse(SelectedMemberId, out var m) ? m : Session.CurrentUser?.GlobalId)
                 : Session.CurrentUser?.GlobalId;
 
-            await ExpenseService.CreateTransferAsync(new ExpenseService.TransferRequest(
-                TransferAmount,
-                TransferSourceAccountId!.Value,
-                TransferDestAccountId!.Value,
-                TransferDate,
-                TransferDescription,
-                TransferNote,
-                memberId
-            ));
+            if (IsEditMode && GlobalId.HasValue)
+            {
+                await ExpenseService.UpdateTransferAsync(
+                    GlobalId.Value,
+                    new ExpenseService.TransferRequest(
+                        TransferAmount,
+                        TransferSourceAccountId!.Value,
+                        TransferDestAccountId!.Value,
+                        TransferDate,
+                        TransferDescription,
+                        TransferNote,
+                        memberId
+                    ));
+            }
+            else
+            {
+                await ExpenseService.CreateTransferAsync(new ExpenseService.TransferRequest(
+                    TransferAmount,
+                    TransferSourceAccountId!.Value,
+                    TransferDestAccountId!.Value,
+                    TransferDate,
+                    TransferDescription,
+                    TransferNote,
+                    memberId
+                ));
+            }
 
             Nav.NavigateTo("/expenses");
         }

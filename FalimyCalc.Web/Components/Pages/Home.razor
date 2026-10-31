@@ -681,8 +681,10 @@ else
                 }
                 @if (_recurringSummary.DueNext7DaysCount > 0)
                 {
+                    var rDays = _recurringSummary.EarliestDueDays ?? 0;
+                    var rBadgeText = rDays == 0 ? "Due Today" : rDays == 1 ? "Due Tomorrow" : $"Due in {rDays}d";
                     <span class="badge bg-warning-subtle text-warning px-2 py-1">
-                        ⚠️ @_recurringSummary.DueNext7DaysCount Due in 7 Days (₹@_recurringSummary.DueNext7DaysAmount.ToString("N0"))
+                        ⚠️ @_recurringSummary.DueNext7DaysCount (@rBadgeText, ₹@_recurringSummary.DueNext7DaysAmount.ToString("N0"))
                     </span>
                 }
                 <a href="/subscriptions" class="btn btn-outline-primary btn-sm rounded-pill px-3">
@@ -795,8 +797,10 @@ else
                 }
                 @if (_loansSummary.DueNext7DaysCount > 0)
                 {
+                    var lDays = _loansSummary.EarliestDueDays ?? 0;
+                    var lBadgeText = lDays == 0 ? "Due Today" : lDays == 1 ? "Due Tomorrow" : $"Due in {lDays}d";
                     <span class="badge bg-warning text-dark px-2 py-1">
-                        ⏳ @_loansSummary.DueNext7DaysCount Due Soon (₹@_loansSummary.DueNext7DaysAmount.ToString("N0"))
+                        ⏳ @_loansSummary.DueNext7DaysCount (@lBadgeText, ₹@_loansSummary.DueNext7DaysAmount.ToString("N0"))
                     </span>
                 }
                 <a href="/loans" class="btn btn-outline-primary btn-sm rounded-pill px-3">
@@ -1263,7 +1267,38 @@ else
         }
         else if (_recurringSummary.DueNext7DaysCount > 0)
         {
-            _spendingAlerts.Add(new("warning", "🔁", $"You have {_recurringSummary.DueNext7DaysCount} recurring bill{(_recurringSummary.DueNext7DaysCount > 1 ? "s" : "")} due in the next 7 days (₹{_recurringSummary.DueNext7DaysAmount:N2})."));
+            var dueItems = _recurringSummary.DueSoonItems ?? [];
+            var today = DateTime.Today;
+
+            string dueText;
+            if (dueItems.Count == 1)
+            {
+                var item = dueItems[0];
+                var days = (item.NextDueDate.Date - today).Days;
+                var when = days <= 0 ? "today" : days == 1 ? "tomorrow (in 1 day)" : $"in {days} days";
+                dueText = $"You have 1 recurring bill due {when} ({item.Name}, ₹{item.Amount:N2}).";
+            }
+            else if (dueItems.Count > 1)
+            {
+                var breakdowns = dueItems.OrderBy(r => r.NextDueDate).Select(r =>
+                {
+                    var d = (r.NextDueDate.Date - today).Days;
+                    var when = d <= 0 ? "due today" : d == 1 ? "due tomorrow" : $"due in {d}d";
+                    return $"{r.Name} ({when})";
+                });
+                var earliestDays = dueItems.Min(r => (r.NextDueDate.Date - today).Days);
+                var earliestWhen = earliestDays <= 0 ? "today" : earliestDays == 1 ? "tomorrow" : $"in {earliestDays} days";
+
+                dueText = $"You have {dueItems.Count} recurring bills due soon — earliest due {earliestWhen}: {string.Join(", ", breakdowns)} (total ₹{_recurringSummary.DueNext7DaysAmount:N2}).";
+            }
+            else
+            {
+                var days = _recurringSummary.EarliestDueDays ?? 7;
+                var when = days <= 0 ? "today" : days == 1 ? "tomorrow" : $"in {days} days";
+                dueText = $"You have {_recurringSummary.DueNext7DaysCount} recurring bill{(_recurringSummary.DueNext7DaysCount > 1 ? "s" : "")} due {when} (₹{_recurringSummary.DueNext7DaysAmount:N2}).";
+            }
+
+            _spendingAlerts.Add(new("warning", "🔁", dueText));
         }
 
         if (_loansSummary.OverdueCount > 0)
@@ -1272,7 +1307,38 @@ else
         }
         else if (_loansSummary.DueNext7DaysCount > 0)
         {
-            _spendingAlerts.Add(new("warning", "💳", $"You have {_loansSummary.DueNext7DaysCount} loan EMI{(_loansSummary.DueNext7DaysCount > 1 ? "s" : "")} due in the next 7 days (₹{_loansSummary.DueNext7DaysAmount:N2})."));
+            var dueLoans = _loansSummary.DueSoonEmis ?? [];
+            var today = DateTime.Today;
+
+            string dueLoanText;
+            if (dueLoans.Count == 1)
+            {
+                var l = dueLoans[0];
+                var days = (l.NextDueDate.Date - today).Days;
+                var when = days <= 0 ? "today" : days == 1 ? "tomorrow (in 1 day)" : $"in {days} days";
+                dueLoanText = $"You have 1 loan EMI due {when} ({l.Name}, ₹{l.EmiAmount:N2}).";
+            }
+            else if (dueLoans.Count > 1)
+            {
+                var breakdowns = dueLoans.OrderBy(l => l.NextDueDate).Select(l =>
+                {
+                    var d = (l.NextDueDate.Date - today).Days;
+                    var when = d <= 0 ? "due today" : d == 1 ? "due tomorrow" : $"due in {d}d";
+                    return $"{l.Name} ({when})";
+                });
+                var earliestDays = dueLoans.Min(l => (l.NextDueDate.Date - today).Days);
+                var earliestWhen = earliestDays <= 0 ? "today" : earliestDays == 1 ? "tomorrow" : $"in {earliestDays} days";
+
+                dueLoanText = $"You have {dueLoans.Count} loan EMIs due soon — earliest due {earliestWhen}: {string.Join(", ", breakdowns)} (total ₹{_loansSummary.DueNext7DaysAmount:N2}).";
+            }
+            else
+            {
+                var days = _loansSummary.EarliestDueDays ?? 7;
+                var when = days <= 0 ? "today" : days == 1 ? "tomorrow" : $"in {days} days";
+                dueLoanText = $"You have {_loansSummary.DueNext7DaysCount} loan EMI{(_loansSummary.DueNext7DaysCount > 1 ? "s" : "")} due {when} (₹{_loansSummary.DueNext7DaysAmount:N2}).";
+            }
+
+            _spendingAlerts.Add(new("warning", "💳", dueLoanText));
         }
 
         foreach (var b in _budgetStatuses.Where(b => b.Budget.HasValue && b.Budget > 0))

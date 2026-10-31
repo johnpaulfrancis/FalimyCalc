@@ -15,7 +15,7 @@
         <div class="d-flex align-items-center gap-2">
             <h1 class="dash-title mb-0">Bank Accounts</h1>
             <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary fs-7 fw-semibold px-2 py-1">
-                @AccountsWithBalances.Count accounts
+                @DisplayedAccounts.Count() accounts
             </span>
         </div>
         <p class="dash-subtitle mt-1 mb-0">
@@ -31,46 +31,70 @@
     </div>
 </div>
 
-<!-- ── Admin One-Tap Switcher (Me vs All Family) ───────────────────────────── -->
-@if (Session.CurrentUser?.Role == "Admin")
-{
-    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+<!-- ── Quick View & Joint Accounts Scope Switcher ───────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 p-2 rounded-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border);">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+        @if (Session.CurrentUser?.Role == "Admin")
+        {
+            <div class="d-flex align-items-center gap-2">
+                <span class="small fw-semibold text-muted">Scope:</span>
+                <div class="view-toggle">
+                    <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                            @onclick="() => SetViewMode(false)">
+                        @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                    </button>
+                    <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
+                            @onclick="() => SetViewMode(true)">
+                        👨‍👩‍👧‍👦 All Family
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Joint Accounts Switcher: View with or without joint accounts -->
         <div class="d-flex align-items-center gap-2">
-            <span class="small fw-semibold text-muted">Quick View:</span>
+            <span class="small fw-semibold text-muted">Joint Accounts:</span>
             <div class="view-toggle">
-                <button type="button" class="view-toggle-btn @(!_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
-                        @onclick="() => SetViewMode(false)">
-                    @Session.CurrentUser.Avatar Me (@Session.CurrentUser.Name)
+                <button type="button" class="view-toggle-btn @(!_excludeJoint ? "active" : "")"
+                        @onclick="() => SetJointFilter(false)">
+                    👥 With Joint
                 </button>
-                <button type="button" class="view-toggle-btn @(_showAllMembers && string.IsNullOrEmpty(SelectedMemberId) ? "active" : "")"
-                        @onclick="() => SetViewMode(true)">
-                    👨‍👩‍👧‍👦 All Family
+                <button type="button" class="view-toggle-btn @(_excludeJoint ? "active" : "")"
+                        @onclick="() => SetJointFilter(true)">
+                    👤 Without Joint
                 </button>
             </div>
         </div>
+    </div>
 
-        <div class="view-context-label mb-0">
-            @if (string.IsNullOrEmpty(SelectedMemberId))
+    <div class="view-context-label mb-0">
+        @if (_excludeJoint)
+        {
+            <span>🛡️ Showing <strong>personal accounts only</strong> (without joint accounts)</span>
+        }
+        else if (string.IsNullOrEmpty(SelectedMemberId))
+        {
+            if (_showAllMembers)
             {
-                if (_showAllMembers)
-                {
-                    <span>👨‍👩‍👧‍👦 Showing <strong>all family</strong> accounts</span>
-                }
-                else
-                {
-                    <span>@Session.CurrentUser?.Avatar Showing only <strong>your (@Session.CurrentUser?.Name)</strong> accounts</span>
-                }
+                <span>👨‍👩‍👧‍👦 Showing <strong>all family</strong> accounts (including joint)</span>
             }
-            else if (Guid.TryParse(SelectedMemberId, out var selectedGuid))
+            else
             {
-                var selMem = FamilyMembers.FirstOrDefault(m => m.GlobalId == selectedGuid);
-                if (selMem != null)
-                {
-                    <span>@selMem.Avatar Filtered by <strong>@selMem.Name</strong>'s accounts</span>
-                }
+                <span>@Session.CurrentUser?.Avatar Showing <strong>your (@Session.CurrentUser?.Name)</strong> accounts (including joint)</span>
             }
-        </div>
+        }
+        else if (Guid.TryParse(SelectedMemberId, out var selectedGuid))
+        {
+            var selMem = FamilyMembers.FirstOrDefault(m => m.GlobalId == selectedGuid);
+            if (selMem != null)
+            {
+                <span>@selMem.Avatar Filtered by <strong>@selMem.Name</strong>'s accounts</span>
+            }
+        }
+    </div>
 
+    @if (Session.CurrentUser?.Role == "Admin")
+    {
         <div class="d-flex align-items-center gap-2">
             <span class="small text-muted fw-semibold d-none d-sm-inline">Filter Profile:</span>
             <select class="form-select form-select-sm" style="width: 170px;" @bind="SelectedMemberId" @bind:after="OnMemberFilterChanged">
@@ -81,32 +105,52 @@
                 }
             </select>
         </div>
-    </div>
-}
+    }
+</div>
 
 <!-- ── Top KPI Stat Cards ──────────────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
     <!-- Net Combined Balance -->
     <div class="col-sm-6 col-lg-3">
-        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
-            <div class="stat-icon-circle @(TotalNetBalance >= 0 ? "bg-success bg-opacity-10 text-success" : "bg-danger bg-opacity-10 text-danger")">
-                🏦
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-column justify-content-between" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important;">
+            <div class="d-flex flex-row align-items-center gap-3">
+                <div class="stat-icon-circle @(TotalNetBalance >= 0 ? "bg-success bg-opacity-10 text-success" : "bg-danger bg-opacity-10 text-danger")">
+                    🏦
+                </div>
+                <div class="flex-grow-1">
+                    <span class="text-muted small fw-semibold d-block">
+                        @(_excludeJoint ? "Personal Balance (No Joint)" : "Net Total Balance")
+                    </span>
+                    <h3 class="mb-0 fw-bold @(TotalNetBalance >= 0 ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
+                        ₹ @TotalNetBalance.ToString("N2")
+                    </h3>
+                    <span class="badge @(TotalNetBalance >= 0 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")" style="font-size: 0.72rem;">
+                        @(TotalNetBalance >= 0 ? "✅ Net Positive" : "🚨 Overdrawn / Deficit")
+                        @if (_excludeJoint)
+                        {
+                            <span class="ms-1 fw-normal">(No Joint)</span>
+                        }
+                    </span>
+                </div>
             </div>
-            <div>
-                <span class="text-muted small fw-semibold d-block">Net Total Balance</span>
-                <h3 class="mb-0 fw-bold @(TotalNetBalance >= 0 ? "text-success" : "text-danger")" style="font-variant-numeric: tabular-nums;">
-                    ₹ @TotalNetBalance.ToString("N2")
-                </h3>
-                <span class="badge @(TotalNetBalance >= 0 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")" style="font-size: 0.72rem;">
-                    @(TotalNetBalance >= 0 ? "✅ Net Positive" : "🚨 Overdrawn / Deficit")
-                </span>
+
+            <!-- Mini Personal (No Joint) vs Joint Split -->
+            <div class="mt-2 pt-2 border-top d-flex justify-content-between align-items-center flex-wrap gap-1" style="border-color: var(--dash-border) !important; font-size: 0.73rem;">
+                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none @(_excludeJoint ? "fw-bold text-primary" : "text-muted")"
+                        @onclick="() => SetJointFilter(true)" title="Click to view balance without joint accounts">
+                    👤 Personal: <strong>₹ @PersonalNetBalance.ToString("N2")</strong>
+                </button>
+                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none @(!_excludeJoint ? "text-muted" : "text-muted")"
+                        @onclick="() => SetJointFilter(false)" title="Click to include joint accounts">
+                    👥 Joint: <strong>₹ @JointNetBalance.ToString("N2")</strong>
+                </button>
             </div>
         </div>
     </div>
 
     <!-- Total Spent from Accounts -->
     <div class="col-sm-6 col-lg-3">
-        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important;">
             <div class="stat-icon-circle bg-danger bg-opacity-10 text-danger">
                 💳
             </div>
@@ -122,7 +166,7 @@
 
     <!-- Baseline Initial Balances -->
     <div class="col-sm-6 col-lg-3">
-        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important;">
             <div class="stat-icon-circle bg-primary bg-opacity-10 text-primary">
                 ⚖️
             </div>
@@ -138,17 +182,17 @@
 
     <!-- Account Count / Breakdown -->
     <div class="col-sm-6 col-lg-3">
-        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3">
+        <div class="card p-3 h-100 border-0 shadow-sm d-flex flex-row align-items-center gap-3" style="background: var(--dash-surface); border: 1px solid var(--dash-border) !important;">
             <div class="stat-icon-circle bg-info bg-opacity-10 text-info">
                 📑
             </div>
             <div>
                 <span class="text-muted small fw-semibold d-block">Active Accounts</span>
                 <h3 class="mb-0 fw-bold" style="color: var(--dash-text);">
-                    @AccountsWithBalances.Count
+                    @DisplayedAccounts.Count()
                 </h3>
                 <span class="text-muted small" style="font-size: 0.75rem;">
-                    @NegativeAccountsCount negative, @PositiveAccountsCount positive
+                    @PersonalAccountsCount personal, @JointAccountsCount joint
                 </span>
             </div>
         </div>
@@ -177,27 +221,32 @@
             <div class="d-flex align-items-center gap-1 flex-wrap">
                 <button type="button"
                         class="btn btn-sm @(ActiveTypeFilter == "all" ? "btn-primary" : "btn-outline-secondary")"
-                        @onclick='() => ActiveTypeFilter = "all"'>
-                    All (@AccountsWithBalances.Count)
+                        @onclick='() => SetActiveTypeFilter("all")'>
+                    All (@DisplayedAccounts.Count())
+                </button>
+                <button type="button"
+                        class="btn btn-sm @(ActiveTypeFilter == "personal" ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick='() => SetActiveTypeFilter("personal")'>
+                    👤 Without Joint (@PersonalAccountsCount)
                 </button>
                 <button type="button"
                         class="btn btn-sm @(ActiveTypeFilter == "joint" ? "btn-primary" : "btn-outline-secondary")"
-                        @onclick='() => ActiveTypeFilter = "joint"'>
-                    👥 Joint (@AccountsWithBalances.Count(a => a.Account.IsJoint))
+                        @onclick='() => SetActiveTypeFilter("joint")'>
+                    👥 Joint (@JointAccountsCount)
                 </button>
                 <button type="button"
                         class="btn btn-sm @(ActiveTypeFilter == "savings" ? "btn-primary" : "btn-outline-secondary")"
-                        @onclick='() => ActiveTypeFilter = "savings"'>
+                        @onclick='() => SetActiveTypeFilter("savings")'>
                     Savings
                 </button>
                 <button type="button"
                         class="btn btn-sm @(ActiveTypeFilter == "credit" ? "btn-primary" : "btn-outline-secondary")"
-                        @onclick='() => ActiveTypeFilter = "credit"'>
+                        @onclick='() => SetActiveTypeFilter("credit")'>
                     Credit Cards
                 </button>
                 <button type="button"
                         class="btn btn-sm @(ActiveTypeFilter == "negative" ? "btn-danger" : "btn-outline-danger")"
-                        @onclick='() => ActiveTypeFilter = "negative"'>
+                        @onclick='() => SetActiveTypeFilter("negative")'>
                     Overdrawn / Negative (@NegativeAccountsCount)
                 </button>
             </div>
@@ -739,6 +788,7 @@ else
 
     // Admin view toggle (defaults to admin's own account)
     private bool _showAllMembers = false;
+    private bool _excludeJoint = false;
     private string? SelectedMemberId;
 
     // Filters & Search
@@ -781,20 +831,38 @@ else
         }
     }
 
+    // Active Accounts (excludes accounts belonging to deleted profiles)
+    private IEnumerable<ExpenseService.BankAccountWithBalance> ActiveAccounts =>
+        AccountsWithBalances.Where(a => a.Owner != null && !a.Owner.IsDeleted);
+
+    // Personal (without joint) accounts & Joint accounts subsets
+    private IEnumerable<ExpenseService.BankAccountWithBalance> PersonalAccounts =>
+        ActiveAccounts.Where(a => !a.Account.IsJoint);
+    private IEnumerable<ExpenseService.BankAccountWithBalance> JointAccounts =>
+        ActiveAccounts.Where(a => a.Account.IsJoint);
+
+    // Accounts to display based on Joint exclusion mode
+    private IEnumerable<ExpenseService.BankAccountWithBalance> DisplayedAccounts =>
+        _excludeJoint ? PersonalAccounts : ActiveAccounts;
+
     // Computed KPI Metrics
-    private decimal TotalNetBalance => AccountsWithBalances.Sum(a => a.CurrentBalance);
-    private decimal TotalSpentAllAccounts => AccountsWithBalances.Sum(a => a.TotalSpent);
-    private decimal TotalInitialBalance => AccountsWithBalances.Sum(a => a.InitialBalance);
-    private int TotalTransactionsCount => AccountsWithBalances.Sum(a => a.TransactionCount);
-    private int PositiveAccountsCount => AccountsWithBalances.Count(a => a.CurrentBalance >= 0);
-    private int NegativeAccountsCount => AccountsWithBalances.Count(a => a.CurrentBalance < 0);
+    private decimal TotalNetBalance => DisplayedAccounts.Sum(a => a.CurrentBalance);
+    private decimal PersonalNetBalance => PersonalAccounts.Sum(a => a.CurrentBalance);
+    private decimal JointNetBalance => JointAccounts.Sum(a => a.CurrentBalance);
+    private decimal TotalSpentAllAccounts => DisplayedAccounts.Sum(a => a.TotalSpent);
+    private decimal TotalInitialBalance => DisplayedAccounts.Sum(a => a.InitialBalance);
+    private int TotalTransactionsCount => DisplayedAccounts.Sum(a => a.TransactionCount);
+    private int PositiveAccountsCount => DisplayedAccounts.Count(a => a.CurrentBalance >= 0);
+    private int NegativeAccountsCount => DisplayedAccounts.Count(a => a.CurrentBalance < 0);
+    private int PersonalAccountsCount => PersonalAccounts.Count();
+    private int JointAccountsCount => JointAccounts.Count();
 
     // Filtered & Sorted Accounts
     private IEnumerable<ExpenseService.BankAccountWithBalance> FilteredAccounts
     {
         get
         {
-            var query = AccountsWithBalances.AsEnumerable();
+            var query = DisplayedAccounts;
 
             // Search
             if (!string.IsNullOrWhiteSpace(SearchText))
@@ -808,6 +876,9 @@ else
             // Type filter
             switch (ActiveTypeFilter)
             {
+                case "personal":
+                    query = query.Where(a => !a.Account.IsJoint);
+                    break;
                 case "joint":
                     query = query.Where(a => a.Account.IsJoint);
                     break;
@@ -832,6 +903,28 @@ else
             };
 
             return query;
+        }
+    }
+
+    private void SetJointFilter(bool excludeJoint)
+    {
+        _excludeJoint = excludeJoint;
+        if (_excludeJoint && ActiveTypeFilter == "joint")
+        {
+            ActiveTypeFilter = "all";
+        }
+    }
+
+    private void SetActiveTypeFilter(string filter)
+    {
+        ActiveTypeFilter = filter;
+        if (filter == "personal")
+        {
+            _excludeJoint = true;
+        }
+        else if (filter == "joint")
+        {
+            _excludeJoint = false;
         }
     }
 

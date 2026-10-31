@@ -120,6 +120,8 @@ public class ExpenseService
 
         if (accountGlobalId.HasValue)
             query = query.Where(e => e.AccountGlobalId == accountGlobalId.Value);
+        else
+            query = query.Where(e => e.Tags == null || !e.Tags.Contains("transfer-in"));
 
         if (!string.IsNullOrWhiteSpace(searchTerm))
             query = query.Where(e => e.Description.Contains(searchTerm) || (e.Note != null && e.Note.Contains(searchTerm)) || (e.Tags != null && e.Tags.Contains(searchTerm)) || (e.Account != null && e.Account.Contains(searchTerm)));
@@ -217,6 +219,8 @@ public class ExpenseService
 
         if (accountGlobalId.HasValue)
             query = query.Where(e => e.AccountGlobalId == accountGlobalId.Value);
+        else
+            query = query.Where(e => e.Tags == null || !e.Tags.Contains("transfer-in"));
 
         if (fromDate.HasValue)
             query = query.Where(e => e.TransactionDate >= fromDate.Value);
@@ -754,10 +758,155 @@ public class ExpenseService
         return (outflow, inflow);
     }
 
+    public async Task<Expense?> GetTransferPeerAsync(Guid expenseGlobalId)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var expense = await db.Expenses.FirstOrDefaultAsync(e => e.GlobalId == expenseGlobalId && !e.IsDeleted);
+        if (expense == null || string.IsNullOrEmpty(expense.Tags) || !expense.Tags.Contains("ref:")) return null;
+
+        var parts = expense.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var refTag = parts.FirstOrDefault(p => p.StartsWith("ref:"));
+        if (string.IsNullOrEmpty(refTag)) return null;
+
+        return await db.Expenses
+            .Include(e => e.BankAccount)
+            .FirstOrDefaultAsync(e => e.GlobalId != expenseGlobalId && !e.IsDeleted && e.Tags != null && e.Tags.Contains(refTag));
+    }
+
+    public async Task<(Expense Outflow, Expense Inflow)> UpdateTransferAsync(Guid transferExpenseGlobalId, TransferRequest request)
+    {
+        if (request.Amount <= 0)
+            throw new ArgumentException("Transfer amount must be greater than zero.");
+
+        if (request.SourceAccountGlobalId == request.DestinationAccountGlobalId)
+            throw new ArgumentException("Source and Destination accounts must be different.");
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var existing = await db.Expenses.FirstOrDefaultAsync(e => e.GlobalId == transferExpenseGlobalId && !e.IsDeleted);
+        if (existing == null)
+            throw new InvalidOperationException("Transfer transaction not found.");
+
+        var sourceAcc = await db.BankAccounts.FirstOrDefaultAsync(a => a.GlobalId == request.SourceAccountGlobalId && !a.IsDeleted);
+        if (sourceAcc == null)
+            throw new InvalidOperationException("Source bank account not found.");
+
+        var destAcc = await db.BankAccounts.FirstOrDefaultAsync(a => a.GlobalId == request.DestinationAccountGlobalId && !a.IsDeleted);
+        if (destAcc == null)
+            throw new InvalidOperationException("Destination bank account not found.");
+
+        // Find linked peer
+        Expense? peer = null;
+        string? transferTag = null;
+        if (!string.IsNullOrEmpty(existing.Tags) && existing.Tags.Contains("ref:"))
+        {
+            var parts = existing.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var refPart = parts.FirstOrDefault(p => p.StartsWith("ref:"));
+            if (!string.IsNullOrEmpty(refPart))
+            {
+                transferTag = refPart;
+                peer = await db.Expenses.FirstOrDefaultAsync(e => e.GlobalId != transferExpenseGlobalId && !e.IsDeleted && e.Tags != null && e.Tags.Contains(refPart));
+            }
+        }
+
+        if (string.IsNullOrEmpty(transferTag))
+        {
+            transferTag = $"ref:{Guid.NewGuid():N}"[..20];
+        }
+
+        var isExistingOutflow = IsTransferOutTransaction(existing);
+        var memberId = request.MemberGlobalId ?? sourceAcc.MemberGlobalId;
+
+        var descOut = string.IsNullOrWhiteSpace(request.Description)
+            ? $"Transfer to {destAcc.AccountName}"
+            : request.Description.Trim();
+        var descIn = string.IsNullOrWhiteSpace(request.Description)
+            ? $"Transfer from {sourceAcc.AccountName}"
+            : request.Description.Trim();
+
+        Expense outflow;
+        Expense inflow;
+
+        if (isExistingOutflow)
+        {
+            outflow = existing;
+            if (peer != null)
+            {
+                inflow = peer;
+            }
+            else
+            {
+                inflow = new Expense
+                {
+                    GlobalId = Guid.NewGuid(),
+                    CreatedAt = DateTime.UtcNow,
+                    DeviceId = "web"
+                };
+                db.Expenses.Add(inflow);
+            }
+        }
+        else
+        {
+            inflow = existing;
+            if (peer != null)
+            {
+                outflow = peer;
+            }
+            else
+            {
+                outflow = new Expense
+                {
+                    GlobalId = Guid.NewGuid(),
+                    CreatedAt = DateTime.UtcNow,
+                    DeviceId = "web"
+                };
+                db.Expenses.Add(outflow);
+            }
+        }
+
+        // Update outflow
+        outflow.Amount = Math.Abs(request.Amount);
+        outflow.Description = descOut;
+        outflow.TransactionDate = request.TransactionDate;
+        outflow.Account = sourceAcc.AccountName;
+        outflow.AccountGlobalId = sourceAcc.GlobalId;
+        outflow.BankAccountId = sourceAcc.Id;
+        outflow.MemberGlobalId = memberId;
+        outflow.Subcategory = "Transfer";
+        outflow.Tags = $"transfer,transfer-out,{transferTag}";
+        outflow.Note = string.IsNullOrWhiteSpace(request.Note)
+            ? $"Transferred to {destAcc.AccountName}"
+            : $"{request.Note.Trim()} (To: {destAcc.AccountName})";
+        outflow.ModifiedAt = DateTime.UtcNow;
+
+        // Update inflow
+        inflow.Amount = Math.Abs(request.Amount);
+        inflow.Description = descIn;
+        inflow.TransactionDate = request.TransactionDate;
+        inflow.Account = destAcc.AccountName;
+        inflow.AccountGlobalId = destAcc.GlobalId;
+        inflow.BankAccountId = destAcc.Id;
+        inflow.MemberGlobalId = memberId;
+        inflow.Subcategory = "Transfer";
+        inflow.Tags = $"transfer,transfer-in,{transferTag}";
+        inflow.Note = string.IsNullOrWhiteSpace(request.Note)
+            ? $"Transferred from {sourceAcc.AccountName}"
+            : $"{request.Note.Trim()} (From: {sourceAcc.AccountName})";
+        inflow.ModifiedAt = DateTime.UtcNow;
+
+        await db.SaveChangesAsync();
+        return (outflow, inflow);
+    }
+
     public async Task<List<BankAccount>> GetBankAccountsAsync(Guid? memberGlobalId = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
-        var query = db.BankAccounts.Where(a => !a.IsDeleted);
+        var activeMemberGuids = await db.FamilyMembers
+            .Where(m => !m.IsDeleted)
+            .Select(m => m.GlobalId)
+            .ToListAsync();
+
+        var query = db.BankAccounts.Where(a => !a.IsDeleted && activeMemberGuids.Contains(a.MemberGlobalId));
 
         if (memberGlobalId.HasValue)
         {
@@ -845,8 +994,32 @@ public class ExpenseService
         await using var db = await _dbFactory.CreateDbContextAsync();
         var members = await db.FamilyMembers.Where(m => !m.IsDeleted).ToListAsync();
         var memberMap = members.ToDictionary(m => m.GlobalId);
+        var activeMemberGuids = memberMap.Keys.ToHashSet();
 
-        var accountsQuery = db.BankAccounts.Where(a => !a.IsDeleted);
+        // Also proactively soft-delete any orphaned accounts belonging to deleted members if any exist
+        var deletedMemberGuids = await db.FamilyMembers
+            .Where(m => m.IsDeleted)
+            .Select(m => m.GlobalId)
+            .ToListAsync();
+
+        if (deletedMemberGuids.Any())
+        {
+            var orphanedAccounts = await db.BankAccounts
+                .Where(a => !a.IsDeleted && deletedMemberGuids.Contains(a.MemberGlobalId))
+                .ToListAsync();
+
+            if (orphanedAccounts.Any())
+            {
+                foreach (var oAcc in orphanedAccounts)
+                {
+                    oAcc.IsDeleted = true;
+                    oAcc.ModifiedAt = DateTime.UtcNow;
+                }
+                await db.SaveChangesAsync();
+            }
+        }
+
+        var accountsQuery = db.BankAccounts.Where(a => !a.IsDeleted && activeMemberGuids.Contains(a.MemberGlobalId));
         if (memberGlobalId.HasValue)
         {
             var mStr = memberGlobalId.Value.ToString();
@@ -935,8 +1108,12 @@ public class ExpenseService
     public async Task<FinancialKpiSummary> GetFinancialKpiSummaryAsync(Guid? memberGlobalId = null, int days = 30)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
+        var activeMemberGuids = await db.FamilyMembers
+            .Where(m => !m.IsDeleted)
+            .Select(m => m.GlobalId)
+            .ToListAsync();
 
-        var accountsQuery = db.BankAccounts.Where(a => !a.IsDeleted);
+        var accountsQuery = db.BankAccounts.Where(a => !a.IsDeleted && activeMemberGuids.Contains(a.MemberGlobalId));
         if (memberGlobalId.HasValue)
             accountsQuery = accountsQuery.Where(a => a.MemberGlobalId == memberGlobalId.Value);
 
@@ -1270,13 +1447,219 @@ public class ExpenseService
             .CountAsync();
     }
 
+    public record ApprovePendingRequest(
+        Guid PendingId,
+        string TransactionType, // "expense" | "income" | "transfer"
+        decimal Amount,
+        string Description,
+        DateTime TransactionDate,
+        Guid? CategoryGlobalId = null,
+        string? NewCategoryName = null,
+        Guid? AccountGlobalId = null,
+        string? AccountName = null,
+        Guid? MemberGlobalId = null,
+        string? Subcategory = null,
+        string? Tags = null,
+        string? Note = null,
+        Guid? DestinationAccountGlobalId = null // For transfer
+    );
+
+    public record UpdatePendingRequest(
+        Guid PendingId,
+        string TransactionType, // "expense" | "income" | "transfer"
+        decimal Amount,
+        string Description,
+        DateTime TransactionDate,
+        string? Account = null,
+        string? Bank = null,
+        string? CategoryName = null,
+        string? Subcategory = null,
+        string? Tags = null,
+        string? Note = null
+    );
+
+    public async Task<bool> UpdatePendingTransactionAsync(UpdatePendingRequest request)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var pending = await db.PendingTransactions.FirstOrDefaultAsync(p => p.GlobalId == request.PendingId && !p.IsDeleted);
+        if (pending == null) return false;
+
+        pending.DetectedAmount = Math.Abs(request.Amount);
+        pending.DetectedMerchant = string.IsNullOrWhiteSpace(request.Description) ? "Transaction" : request.Description.Trim();
+        pending.DetectedDate = request.TransactionDate;
+        pending.DetectedAccount = request.Account;
+        pending.DetectedBank = request.Bank ?? request.Account;
+
+        var type = request.TransactionType.ToLowerInvariant();
+        if (type == "income")
+            pending.DetectedType = TransactionType.Credit;
+        else
+            pending.DetectedType = TransactionType.Debit;
+
+        // Reconstruct or update metadata in RawSmsBody
+        var bodyParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(request.CategoryName))
+            bodyParts.Add($"Category: {request.CategoryName.Trim()}");
+        if (!string.IsNullOrWhiteSpace(request.Subcategory))
+            bodyParts.Add($"Subcategory: {request.Subcategory.Trim()}");
+        if (!string.IsNullOrWhiteSpace(request.Tags))
+            bodyParts.Add($"Tags: {request.Tags.Trim()}");
+        if (!string.IsNullOrWhiteSpace(request.Note))
+            bodyParts.Add($"Note: {request.Note.Trim()}");
+        if (!string.IsNullOrWhiteSpace(request.Account))
+            bodyParts.Add($"Account: {request.Account.Trim()}");
+
+        if (bodyParts.Any())
+        {
+            var prefix = pending.RawSmsBody.StartsWith("[Excel Import]") ? "[Excel Import] | " : "";
+            pending.RawSmsBody = prefix + string.Join(" | ", bodyParts);
+        }
+
+        pending.ModifiedAt = DateTime.UtcNow;
+        pending.DeviceId = "web-edit";
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<Expense?> ApprovePendingTransactionAdvancedAsync(ApprovePendingRequest request)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var pending = await db.PendingTransactions.FirstOrDefaultAsync(p => p.GlobalId == request.PendingId && !p.IsDeleted);
+        if (pending == null) return null;
+
+        var type = request.TransactionType?.ToLowerInvariant() ?? "expense";
+
+        // 1. Handle Transfer
+        if (type == "transfer")
+        {
+            if (!request.AccountGlobalId.HasValue || !request.DestinationAccountGlobalId.HasValue)
+                throw new InvalidOperationException("Both source and destination accounts must be selected for a transfer.");
+
+            var (outflow, _) = await CreateTransferAsync(new TransferRequest(
+                Amount: Math.Abs(request.Amount),
+                SourceAccountGlobalId: request.AccountGlobalId.Value,
+                DestinationAccountGlobalId: request.DestinationAccountGlobalId.Value,
+                TransactionDate: request.TransactionDate,
+                Description: request.Description,
+                Note: request.Note,
+                MemberGlobalId: request.MemberGlobalId
+            ));
+
+            pending.Status = PendingTransactionStatus.Approved;
+            pending.ApprovedAsExpenseGlobalId = outflow.GlobalId;
+            pending.ModifiedAt = DateTime.UtcNow;
+            pending.DeviceId = "web-approve-transfer";
+            await db.SaveChangesAsync();
+            return outflow;
+        }
+
+        // 2. Handle Category creation if needed
+        var categoryGlobalId = request.CategoryGlobalId;
+        if (!categoryGlobalId.HasValue && !string.IsNullOrWhiteSpace(request.NewCategoryName))
+        {
+            var catTrim = request.NewCategoryName.Trim();
+            var existingCat = await db.Categories.FirstOrDefaultAsync(c => !c.IsDeleted && c.Name.ToLower() == catTrim.ToLower());
+            if (existingCat != null)
+            {
+                categoryGlobalId = existingCat.GlobalId;
+            }
+            else
+            {
+                var createdCat = new Category
+                {
+                    GlobalId = Guid.NewGuid(),
+                    Name = catTrim,
+                    Icon = "📁",
+                    Colour = "#6366f1",
+                    DeviceId = "import",
+                    CreatedAt = DateTime.UtcNow,
+                    ModifiedAt = DateTime.UtcNow
+                };
+                db.Categories.Add(createdCat);
+                await db.SaveChangesAsync();
+                categoryGlobalId = createdCat.GlobalId;
+            }
+        }
+
+        // 3. Tags & Subcategory
+        var tags = request.Tags;
+        var subcategory = request.Subcategory;
+        if (type == "income")
+        {
+            if (string.IsNullOrWhiteSpace(tags)) tags = "income";
+            else if (!tags.Contains("income", StringComparison.OrdinalIgnoreCase)) tags = $"{tags},income";
+
+            if (string.IsNullOrWhiteSpace(subcategory)) subcategory = "Income";
+        }
+
+        // 4. Bank Account resolution
+        string? resolvedAccountName = request.AccountName;
+        Guid? resolvedAccountGlobalId = request.AccountGlobalId;
+        int? resolvedBankAccountId = null;
+
+        if (resolvedAccountGlobalId.HasValue)
+        {
+            var acc = await db.BankAccounts.FirstOrDefaultAsync(a => a.GlobalId == resolvedAccountGlobalId.Value && !a.IsDeleted);
+            if (acc != null)
+            {
+                resolvedAccountName = acc.AccountName;
+                resolvedBankAccountId = acc.Id;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(resolvedAccountName))
+        {
+            var acc = await db.BankAccounts.FirstOrDefaultAsync(a => !a.IsDeleted && (a.AccountName == resolvedAccountName || (a.AccountNumberSuffix != null && resolvedAccountName.Contains(a.AccountNumberSuffix))));
+            if (acc != null)
+            {
+                resolvedAccountGlobalId = acc.GlobalId;
+                resolvedBankAccountId = acc.Id;
+            }
+        }
+
+        var expense = new Expense
+        {
+            GlobalId = Guid.NewGuid(),
+            Amount = Math.Abs(request.Amount),
+            Description = string.IsNullOrWhiteSpace(request.Description) ? (type == "income" ? "Income" : "Expense") : request.Description.Trim(),
+            TransactionDate = request.TransactionDate,
+            CategoryGlobalId = categoryGlobalId,
+            MemberGlobalId = request.MemberGlobalId,
+            Account = resolvedAccountName ?? pending.DetectedAccount,
+            AccountGlobalId = resolvedAccountGlobalId,
+            BankAccountId = resolvedBankAccountId,
+            Note = request.Note,
+            Subcategory = subcategory,
+            Tags = tags,
+            DeviceId = "web-approve",
+            CreatedAt = DateTime.UtcNow,
+            ModifiedAt = DateTime.UtcNow
+        };
+
+        if (categoryGlobalId.HasValue)
+        {
+            var cat = await db.Categories.FirstOrDefaultAsync(c => c.GlobalId == categoryGlobalId.Value);
+            expense.CategoryId = cat?.Id;
+        }
+
+        db.Expenses.Add(expense);
+
+        pending.Status = PendingTransactionStatus.Approved;
+        pending.ApprovedAsExpenseGlobalId = expense.GlobalId;
+        pending.ModifiedAt = DateTime.UtcNow;
+        pending.DeviceId = "web-approve";
+
+        await db.SaveChangesAsync();
+        return expense;
+    }
+
     public async Task<Expense?> ApprovePendingTransactionAsync(
         Guid pendingId,
         Guid? categoryGlobalId,
         decimal amount,
         string description,
         DateTime transactionDate,
-        Guid? memberGlobalId = null)
+        Guid? memberGlobalId = null,
+        string? newCategoryName = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         var pending = await db.PendingTransactions
@@ -1291,48 +1674,36 @@ public class ExpenseService
             if (match.Success) note = match.Groups[1].Value.Trim();
         }
 
-        var expense = new Expense
+        string? tags = null;
+        if (!string.IsNullOrEmpty(pending.RawSmsBody) && pending.RawSmsBody.Contains("Tags:"))
         {
-            GlobalId = Guid.NewGuid(),
-            Amount = amount,
-            Description = description,
-            TransactionDate = transactionDate,
-            CategoryGlobalId = categoryGlobalId,
-            MemberGlobalId = memberGlobalId,
-            Account = pending.DetectedAccount,
-            Note = note,
-            DeviceId = "web",
-            CreatedAt = DateTime.UtcNow,
-            ModifiedAt = DateTime.UtcNow
-        };
-
-        if (categoryGlobalId.HasValue)
-        {
-            var cat = await db.Categories
-                .FirstOrDefaultAsync(c => c.GlobalId == categoryGlobalId.Value);
-            expense.CategoryId = cat?.Id;
+            var match = System.Text.RegularExpressions.Regex.Match(pending.RawSmsBody, @"Tags:\s*([^|\r\n]+)");
+            if (match.Success) tags = match.Groups[1].Value.Trim();
         }
 
-        if (!string.IsNullOrWhiteSpace(expense.Account))
+        string? subcategory = null;
+        if (!string.IsNullOrEmpty(pending.RawSmsBody) && pending.RawSmsBody.Contains("Subcategory:"))
         {
-            var acc = await db.BankAccounts
-                .FirstOrDefaultAsync(a => !a.IsDeleted && (a.AccountName == expense.Account || (a.AccountNumberSuffix != null && expense.Account.Contains(a.AccountNumberSuffix))));
-            if (acc != null)
-            {
-                expense.AccountGlobalId = acc.GlobalId;
-                expense.BankAccountId = acc.Id;
-            }
+            var match = System.Text.RegularExpressions.Regex.Match(pending.RawSmsBody, @"Subcategory:\s*([^|\r\n]+)");
+            if (match.Success) subcategory = match.Groups[1].Value.Trim();
         }
 
-        db.Expenses.Add(expense);
+        var isIncome = pending.DetectedType == TransactionType.Credit;
 
-        pending.Status = PendingTransactionStatus.Approved;
-        pending.ApprovedAsExpenseGlobalId = expense.GlobalId;
-        pending.ModifiedAt = DateTime.UtcNow;
-        pending.DeviceId = "web";
-
-        await db.SaveChangesAsync();
-        return expense;
+        return await ApprovePendingTransactionAdvancedAsync(new ApprovePendingRequest(
+            PendingId: pendingId,
+            TransactionType: isIncome ? "income" : "expense",
+            Amount: amount,
+            Description: description,
+            TransactionDate: transactionDate,
+            CategoryGlobalId: categoryGlobalId,
+            NewCategoryName: newCategoryName,
+            AccountName: pending.DetectedAccount,
+            MemberGlobalId: memberGlobalId,
+            Subcategory: subcategory,
+            Tags: tags,
+            Note: note
+        ));
     }
 
     public async Task<int> ApprovePendingTransactionsBatchAsync(List<Guid> pendingIds, Guid? memberGlobalId = null)
@@ -1365,6 +1736,22 @@ public class ExpenseService
                 {
                     var catName = match.Groups[1].Value.Trim();
                     matchedCategory = categories.FirstOrDefault(c => string.Equals(c.Name, catName, StringComparison.OrdinalIgnoreCase));
+                    if (matchedCategory == null && !string.IsNullOrWhiteSpace(catName))
+                    {
+                        matchedCategory = new Category
+                        {
+                            GlobalId = Guid.NewGuid(),
+                            Name = catName,
+                            Icon = "📁",
+                            Colour = "#6366f1",
+                            DeviceId = "import",
+                            CreatedAt = DateTime.UtcNow,
+                            ModifiedAt = DateTime.UtcNow
+                        };
+                        db.Categories.Add(matchedCategory);
+                        await db.SaveChangesAsync();
+                        categories.Add(matchedCategory);
+                    }
                 }
             }
 
@@ -1380,6 +1767,26 @@ public class ExpenseService
                 if (match.Success) note = match.Groups[1].Value.Trim();
             }
 
+            string? tags = null;
+            if (!string.IsNullOrEmpty(pending.RawSmsBody) && pending.RawSmsBody.Contains("Tags:"))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(pending.RawSmsBody, @"Tags:\s*([^|\r\n]+)");
+                if (match.Success) tags = match.Groups[1].Value.Trim();
+            }
+
+            string? subcategory = null;
+            if (!string.IsNullOrEmpty(pending.RawSmsBody) && pending.RawSmsBody.Contains("Subcategory:"))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(pending.RawSmsBody, @"Subcategory:\s*([^|\r\n]+)");
+                if (match.Success) subcategory = match.Groups[1].Value.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(tags) && pending.DetectedType == TransactionType.Credit)
+            {
+                tags = "income";
+                subcategory ??= "Income";
+            }
+
             var expense = new Expense
             {
                 GlobalId = Guid.NewGuid(),
@@ -1390,6 +1797,8 @@ public class ExpenseService
                 CategoryGlobalId = matchedCategory?.GlobalId,
                 Account = pending.DetectedAccount,
                 Note = note,
+                Subcategory = subcategory,
+                Tags = tags,
                 MemberGlobalId = memberGlobalId,
                 DeviceId = "web-bulk-approve",
                 CreatedAt = DateTime.UtcNow,
@@ -1518,7 +1927,8 @@ public class ExpenseService
         string? Currency,
         string? CategoryName,
         string? Subcategory,
-        string? Tags);
+        string? Tags,
+        string? ExternalId = null);
 
     public record ImportResult(int InsertedCount, int UpdatedCount, int SkippedCount, List<string> Errors);
 
@@ -1640,6 +2050,8 @@ public class ExpenseService
 
     /// <summary>
     /// Imports parsed Excel expense items into PendingTransactions for user verification and approval.
+    /// Accurately detects Self-Transfer pairs (matching transaction ID with opposite equal amounts)
+    /// and assigns unique internal GlobalIds so third-party duplicate IDs never cause validation errors.
     /// </summary>
     public async Task<ImportResult> ImportExpensesToPendingAsync(List<ImportExpenseItem> items, Guid? memberGlobalId = null)
     {
@@ -1648,63 +2060,146 @@ public class ExpenseService
         int inserted = 0;
         int skipped = 0;
 
-        var existingCategories = await db.Categories.ToListAsync();
-
-        foreach (var item in items)
+        // ── 1. Pair Detection: Identify Self-Transfers ──────────────────────────────
+        // If two transactions have the same transaction/reference ID and equal amounts
+        // with opposite signs (one debit/outflow < 0, one credit/inflow > 0), they represent
+        // a self-transfer between accounts.
+        var pairedIndices = new Dictionary<int, int>();
+        for (int i = 0; i < items.Count; i++)
         {
+            if (pairedIndices.ContainsKey(i)) continue;
+
+            var itemA = items[i];
+            if (itemA.Amount == 0) continue;
+
+            for (int j = i + 1; j < items.Count; j++)
+            {
+                if (pairedIndices.ContainsKey(j)) continue;
+
+                var itemB = items[j];
+                if (itemB.Amount == 0) continue;
+
+                // Condition 1: Equal absolute amounts with opposite signs
+                bool amountsOpposite = Math.Abs(itemA.Amount) == Math.Abs(itemB.Amount) &&
+                                       ((itemA.Amount < 0 && itemB.Amount > 0) || (itemA.Amount > 0 && itemB.Amount < 0));
+
+                if (!amountsOpposite) continue;
+
+                // Condition 2: Matching transaction identifier
+                bool sameId = (!string.IsNullOrWhiteSpace(itemA.ExternalId) && string.Equals(itemA.ExternalId, itemB.ExternalId, StringComparison.OrdinalIgnoreCase))
+                           || (itemA.GlobalId.HasValue && itemB.GlobalId.HasValue && itemA.GlobalId.Value != Guid.Empty && itemA.GlobalId.Value == itemB.GlobalId.Value);
+
+                // Fallback Condition 2: If no ID in sheet, check if on same date and both descriptions/subcategories indicate transfer
+                bool transferHint = !sameId &&
+                                    itemA.Date.Date == itemB.Date.Date &&
+                                    (!string.Equals(itemA.Account, itemB.Account, StringComparison.OrdinalIgnoreCase)) &&
+                                    ((itemA.Title.Contains("transfer", StringComparison.OrdinalIgnoreCase) || itemB.Title.Contains("transfer", StringComparison.OrdinalIgnoreCase)) ||
+                                     string.Equals(itemA.Subcategory, "Transfer", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(itemB.Subcategory, "Transfer", StringComparison.OrdinalIgnoreCase));
+
+                if (sameId || transferHint)
+                {
+                    pairedIndices[i] = j;
+                    pairedIndices[j] = i;
+                    break;
+                }
+            }
+        }
+
+        // ── 2. Create Pending Transactions ─────────────────────────────────────────
+        for (int i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
             try
             {
-                if (!string.IsNullOrWhiteSpace(item.CategoryName))
-                {
-                    var catTrim = item.CategoryName.Trim();
-                    var matchedCategory = existingCategories.FirstOrDefault(c =>
-                        string.Equals(c.Name, catTrim, StringComparison.OrdinalIgnoreCase) && !c.IsDeleted);
-
-                    if (matchedCategory is null)
-                    {
-                        matchedCategory = new Category
-                        {
-                            GlobalId = Guid.NewGuid(),
-                            Name = catTrim,
-                            Icon = "📁",
-                            Colour = "#6366f1",
-                            DeviceId = "import",
-                            CreatedAt = DateTime.UtcNow,
-                            ModifiedAt = DateTime.UtcNow
-                        };
-                        db.Categories.Add(matchedCategory);
-                        await db.SaveChangesAsync();
-                        existingCategories.Add(matchedCategory);
-                    }
-                }
-
                 var normalizedAmount = Math.Abs(item.Amount);
                 var title = string.IsNullOrWhiteSpace(item.Title) ? "Untitled Expense" : item.Title.Trim();
 
-                var rawBodyParts = new List<string> { "[Excel Import]" };
-                if (!string.IsNullOrWhiteSpace(item.CategoryName)) rawBodyParts.Add($"Category: {item.CategoryName.Trim()}");
-                if (!string.IsNullOrWhiteSpace(item.Note)) rawBodyParts.Add($"Note: {item.Note.Trim()}");
-                if (!string.IsNullOrWhiteSpace(item.Tags)) rawBodyParts.Add($"Tags: {item.Tags.Trim()}");
-                if (!string.IsNullOrWhiteSpace(item.Subcategory)) rawBodyParts.Add($"Subcategory: {item.Subcategory.Trim()}");
-
-                var pending = new PendingTransaction
+                if (pairedIndices.TryGetValue(i, out var partnerIndex))
                 {
-                    GlobalId = item.GlobalId ?? Guid.NewGuid(),
-                    DetectedAmount = normalizedAmount,
-                    DetectedMerchant = title,
-                    DetectedDate = item.Date,
-                    DetectedAccount = item.Account,
-                    DetectedBank = item.Account,
-                    DetectedType = item.Amount < 0 ? TransactionType.Debit : TransactionType.Credit,
-                    Status = PendingTransactionStatus.Pending,
-                    RawSmsBody = string.Join(" | ", rawBodyParts),
-                    DeviceId = "excel-import",
-                    CreatedAt = DateTime.UtcNow,
-                    ModifiedAt = DateTime.UtcNow
-                };
+                    // ── Case A: Self-Transfer Pair ──
+                    var partner = items[partnerIndex];
+                    bool isOutflow = item.Amount < 0; // negative amount = debit from this account
+                    var transferRef = !string.IsNullOrWhiteSpace(item.ExternalId)
+                        ? item.ExternalId.Trim()
+                        : (item.GlobalId.HasValue ? item.GlobalId.Value.ToString("N")[..12] : Guid.NewGuid().ToString("N")[..12]);
 
-                db.PendingTransactions.Add(pending);
-                inserted++;
+                    var sourceAcc = isOutflow ? (item.Account ?? "Account A") : (partner.Account ?? "Account A");
+                    var destAcc = isOutflow ? (partner.Account ?? "Account B") : (item.Account ?? "Account B");
+
+                    var transferTypeDesc = isOutflow
+                        ? $"Self-Transfer to {destAcc}"
+                        : $"Self-Transfer from {sourceAcc}";
+
+                    var finalTitle = (title.Equals("Expense", StringComparison.OrdinalIgnoreCase) ||
+                                      title.Equals("Untitled Expense", StringComparison.OrdinalIgnoreCase) ||
+                                      title.Equals("Transfer", StringComparison.OrdinalIgnoreCase))
+                        ? transferTypeDesc
+                        : title;
+
+                    var rawBodyParts = new List<string>
+                    {
+                        "[Excel Import]",
+                        $"Type: Self-Transfer ({(isOutflow ? "Outflow" : "Inflow")})",
+                        $"Category: Transfer",
+                        $"Subcategory: Transfer",
+                        $"Tags: transfer,{(isOutflow ? "transfer-out" : "transfer-in")},self-transfer,ref:{transferRef}",
+                        $"Account: {item.Account ?? (isOutflow ? sourceAcc : destAcc)}",
+                        isOutflow ? $"ToAccount: {destAcc}" : $"FromAccount: {sourceAcc}"
+                    };
+
+                    if (!string.IsNullOrWhiteSpace(item.ExternalId)) rawBodyParts.Add($"TxId: {item.ExternalId.Trim()}");
+                    if (!string.IsNullOrWhiteSpace(item.Note)) rawBodyParts.Add($"Note: {item.Note.Trim()}");
+                    else rawBodyParts.Add(isOutflow ? $"Note: Transferred to {destAcc}" : $"Note: Transferred from {sourceAcc}");
+
+                    var pending = new PendingTransaction
+                    {
+                        GlobalId = Guid.NewGuid(), // Always self-generated unique identifier for internal database integrity
+                        DetectedAmount = normalizedAmount,
+                        DetectedMerchant = finalTitle,
+                        DetectedDate = item.Date,
+                        DetectedAccount = item.Account ?? (isOutflow ? sourceAcc : destAcc),
+                        DetectedBank = item.Account ?? (isOutflow ? sourceAcc : destAcc),
+                        DetectedType = isOutflow ? TransactionType.Debit : TransactionType.Credit,
+                        Status = PendingTransactionStatus.Pending,
+                        RawSmsBody = string.Join(" | ", rawBodyParts),
+                        DeviceId = "excel-import",
+                        CreatedAt = DateTime.UtcNow,
+                        ModifiedAt = DateTime.UtcNow
+                    };
+
+                    db.PendingTransactions.Add(pending);
+                    inserted++;
+                }
+                else
+                {
+                    // ── Case B: Standard Single Transaction ──
+                    var rawBodyParts = new List<string> { "[Excel Import]" };
+                    if (!string.IsNullOrWhiteSpace(item.CategoryName)) rawBodyParts.Add($"Category: {item.CategoryName.Trim()}");
+                    if (!string.IsNullOrWhiteSpace(item.Note)) rawBodyParts.Add($"Note: {item.Note.Trim()}");
+                    if (!string.IsNullOrWhiteSpace(item.Tags)) rawBodyParts.Add($"Tags: {item.Tags.Trim()}");
+                    if (!string.IsNullOrWhiteSpace(item.Subcategory)) rawBodyParts.Add($"Subcategory: {item.Subcategory.Trim()}");
+                    if (!string.IsNullOrWhiteSpace(item.ExternalId)) rawBodyParts.Add($"TxId: {item.ExternalId.Trim()}");
+
+                    var pending = new PendingTransaction
+                    {
+                        GlobalId = Guid.NewGuid(), // Always generate our own unique GlobalId to avoid third-party ID collisions
+                        DetectedAmount = normalizedAmount,
+                        DetectedMerchant = title,
+                        DetectedDate = item.Date,
+                        DetectedAccount = item.Account,
+                        DetectedBank = item.Account,
+                        DetectedType = item.Amount < 0 ? TransactionType.Debit : TransactionType.Credit,
+                        Status = PendingTransactionStatus.Pending,
+                        RawSmsBody = string.Join(" | ", rawBodyParts),
+                        DeviceId = "excel-import",
+                        CreatedAt = DateTime.UtcNow,
+                        ModifiedAt = DateTime.UtcNow
+                    };
+
+                    db.PendingTransactions.Add(pending);
+                    inserted++;
+                }
             }
             catch (Exception ex)
             {
@@ -1901,7 +2396,7 @@ public class ExpenseService
     }
 
     /// <summary>
-    /// Soft-deletes a family member profile.
+    /// Soft-deletes a family member profile and their owned bank accounts, and removes them from joint accounts.
     /// </summary>
     public async Task<bool> DeleteFamilyMemberAsync(Guid globalId)
     {
@@ -1913,6 +2408,33 @@ public class ExpenseService
 
         existing.IsDeleted = true;
         existing.ModifiedAt = DateTime.UtcNow;
+
+        // Also soft-delete any bank accounts owned by this deleted member
+        var memberAccounts = await db.BankAccounts
+            .Where(a => a.MemberGlobalId == globalId && !a.IsDeleted)
+            .ToListAsync();
+        foreach (var acc in memberAccounts)
+        {
+            acc.IsDeleted = true;
+            acc.ModifiedAt = DateTime.UtcNow;
+        }
+
+        // Also clean up joint accounts where this deleted member was listed
+        var mStr = globalId.ToString();
+        var jointAccounts = await db.BankAccounts
+            .Where(a => a.IsJoint && a.JointMemberGlobalIds != null && a.JointMemberGlobalIds.Contains(mStr))
+            .ToListAsync();
+        foreach (var jAcc in jointAccounts)
+        {
+            var remainingGuids = jAcc.GetJointMemberGuids().Where(g => g != globalId).ToList();
+            jAcc.JointMemberGlobalIds = remainingGuids.Any() ? string.Join(",", remainingGuids) : null;
+            if (!remainingGuids.Any())
+            {
+                jAcc.IsJoint = false;
+            }
+            jAcc.ModifiedAt = DateTime.UtcNow;
+        }
+
         await db.SaveChangesAsync();
         return true;
     }
@@ -2192,7 +2714,9 @@ public class ExpenseService
         decimal DueNext7DaysAmount,
         int OverdueCount,
         decimal OverdueAmount,
-        List<RecurringTransaction> UpcomingItems
+        List<RecurringTransaction> UpcomingItems,
+        int? EarliestDueDays = null,
+        List<RecurringTransaction>? DueSoonItems = null
     );
 
     public static decimal CalculateMonthlyEquivalent(decimal amount, string frequency) =>
@@ -2430,6 +2954,7 @@ public class ExpenseService
         decimal yearlyExpense = monthlyExpense * 12m;
 
         var upcoming = active.OrderBy(r => r.NextDueDate).Take(5).ToList();
+        int? earliestDueDays = dueNext7.Any() ? dueNext7.Min(r => (r.NextDueDate.Date - today).Days) : null;
 
         return new RecurringSummary(
             TotalCount: all.Count,
@@ -2441,7 +2966,9 @@ public class ExpenseService
             DueNext7DaysAmount: dueNext7.Where(r => r.Type == "Expense").Sum(r => r.Amount),
             OverdueCount: overdue.Count,
             OverdueAmount: overdue.Where(r => r.Type == "Expense").Sum(r => r.Amount),
-            UpcomingItems: upcoming
+            UpcomingItems: upcoming,
+            EarliestDueDays: earliestDueDays,
+            DueSoonItems: dueNext7
         );
     }
 
@@ -2460,7 +2987,9 @@ public class ExpenseService
         decimal DueNext7DaysAmount,
         int OverdueCount,
         decimal OverdueAmount,
-        List<Loan> UpcomingEmis
+        List<Loan> UpcomingEmis,
+        int? EarliestDueDays = null,
+        List<Loan>? DueSoonEmis = null
     );
 
     public record AmortizationRow(
@@ -2781,6 +3310,7 @@ public class ExpenseService
         double overallRepaidPct = totalOriginal > 0 ? (double)(totalRepaid / totalOriginal * 100m) : 0;
 
         var upcoming = active.OrderBy(l => l.NextDueDate).Take(5).ToList();
+        int? earliestDueDays = dueNext7.Any() ? dueNext7.Min(l => (l.NextDueDate.Date - today).Days) : null;
 
         return new LoansSummary(
             TotalLoansCount: all.Count,
@@ -2795,7 +3325,9 @@ public class ExpenseService
             DueNext7DaysAmount: dueNext7.Sum(l => l.EmiAmount),
             OverdueCount: overdue.Count,
             OverdueAmount: overdue.Sum(l => l.EmiAmount),
-            UpcomingEmis: upcoming
+            UpcomingEmis: upcoming,
+            EarliestDueDays: earliestDueDays,
+            DueSoonEmis: dueNext7
         );
     }
 }
